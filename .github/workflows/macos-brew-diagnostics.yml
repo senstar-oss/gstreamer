@@ -1,0 +1,55 @@
+name: macOS Brew Diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      formulas:
+        description: 'JSON array of Homebrew formulae to inspect'
+        required: false
+        default: '["libsrtp","srtp"]'
+
+jobs:
+  diagnostics:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        formula: ${{ fromJSON(github.event.inputs.formulas) }}
+    steps:
+      - name: Show runner info
+        run: |
+          sw_vers
+          uname -a
+          echo "Homebrew prefix: $(brew --prefix)"
+          echo "Taps:"
+          brew tap
+
+      - name: Update Homebrew
+        run: |
+          brew update
+
+      - name: Inspect formula
+        run: |
+          set -e
+          FORMULA="${{ matrix.formula }}"
+          echo "==> brew search ${FORMULA}"
+          brew search "${FORMULA}" || true
+          echo
+          echo "==> brew info ${FORMULA}"
+          brew info "${FORMULA}" || true
+          echo
+          echo "==> brew list --versions ${FORMULA}"
+          brew list --versions "${FORMULA}" || true
+
+      - name: Dry-run install
+        run: |
+          FORMULA="${{ matrix.formula }}"
+          echo "==> brew install --dry-run ${FORMULA}"
+          brew install --dry-run "${FORMULA}" || true
+
+      - name: Show renamed formulae
+        run: |
+          echo "==> brew tap-info --installed"
+          brew tap-info --installed
+          echo
+          echo "==> brew doctor"
+          brew doctor || true

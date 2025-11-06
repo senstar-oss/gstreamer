@@ -1,0 +1,56 @@
+name: Linux Dependency Diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Space-separated Debian package names to analyse'
+        required: false
+        default: 'liblrdf0-dev libraptor2-dev libcurl4-gnutls-dev'
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Show runner environment
+        run: |
+          echo "Runner: $(uname -a)"
+          lsb_release -a
+          echo "APT sources:"
+          cat /etc/apt/sources.list
+          echo "---"
+          ls /etc/apt/sources.list.d || true
+
+      - name: Update package metadata
+        run: |
+          sudo apt-get update
+
+      - name: Inspect package metadata
+        run: |
+          set -euo pipefail
+          for pkg in ${{ github.event.inputs.packages }}; do
+            echo "=== Package: ${pkg} ==="
+            apt-cache policy "${pkg}" || true
+            echo "--- Depends ---"
+            apt-cache depends "${pkg}" || true
+            echo "--- Reverse Depends ---"
+            apt-cache rdepends "${pkg}" || true
+            echo "--- Description ---"
+            apt-cache show "${pkg}" | head -n 40 || true
+            echo
+          done
+
+      - name: Dry-run install without recommends
+        run: |
+          set +e
+          sudo apt-get install -y --dry-run --no-install-recommends ${{ github.event.inputs.packages }}
+          echo "Exit code: $?"
+
+      - name: Dry-run install with recommends
+        run: |
+          set +e
+          sudo apt-get install -y --dry-run ${{ github.event.inputs.packages }}
+          echo "Exit code: $?"

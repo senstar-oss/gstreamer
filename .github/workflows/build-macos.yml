@@ -1,0 +1,201 @@
+name: Build GStreamer for macOS
+
+on:
+  workflow_call:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+  workflow_dispatch:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+
+jobs:
+  build:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: ${{ fromJSON((inputs.build_type == 'both' && '["release","debug"]') || (inputs.build_type == 'debug' && '["debug"]') || '["release"]') }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies with Homebrew
+      run: |
+        # Update Homebrew first
+        brew update
+        
+        # Install build tools and core dependencies
+        brew install \
+          meson \
+          ninja \
+          pkg-config \
+          gettext \
+          glib \
+          gobject-introspection \
+          orc \
+          cairo \
+          pango \
+          gdk-pixbuf \
+          libsoup \
+          json-glib \
+          libxml2 \
+          opus \
+          libvorbis \
+          theora \
+          libvpx \
+          lame \
+          x264 \
+          x265 \
+          aom \
+          dav1d \
+          libnice \
+          srtp \
+          opencore-amr \
+          twolame \
+          faad2 \
+          mpg123 \
+          speex \
+          flac \
+          openjpeg \
+          curl \
+          libshout \
+          taglib \
+          wavpack \
+          libdv \
+          libmodplug \
+          librsvg \
+          libsndfile \
+          fftw
+
+    - name: Configure build
+      run: |
+        buildtype="${{ matrix.build_type == 'debug' && 'debug' || 'release' }}"
+        
+        # Parse comma-separated plugin and feature lists
+        plugins="${{ inputs.plugins }}"
+        features="${{ inputs.features }}"
+        
+        # Set plugin options based on comma-separated list
+        base_opt="disabled"
+        good_opt="disabled"
+        bad_opt="disabled"
+        ugly_opt="disabled"
+        libav_opt="disabled"
+        
+        if [[ "$plugins" == *"base"* ]]; then base_opt="enabled"; fi
+        if [[ "$plugins" == *"good"* ]]; then good_opt="enabled"; fi
+        if [[ "$plugins" == *"bad"* ]]; then bad_opt="enabled"; fi
+        if [[ "$plugins" == *"ugly"* ]]; then ugly_opt="enabled"; fi
+        if [[ "$plugins" == *"libav"* ]]; then libav_opt="enabled"; fi
+        
+        # Set feature options based on comma-separated list
+        gpl_opt="disabled"
+        webrtc_opt="disabled"
+        
+        if [[ "$features" == *"gpl"* ]]; then gpl_opt="enabled"; fi
+        if [[ "$features" == *"webrtc"* ]]; then webrtc_opt="enabled"; fi
+        
+        echo "=== Build Configuration ==="
+        echo "Platform: macOS $(sw_vers -productVersion)"
+        echo "Build type: $buildtype"
+        echo "Base plugins: $base_opt"
+        echo "Good plugins: $good_opt"
+        echo "Bad plugins: $bad_opt"
+        echo "Ugly plugins: $ugly_opt"
+        echo "LibAV plugins: $libav_opt"
+        echo "GPL plugins: $gpl_opt"
+        echo "WebRTC: $webrtc_opt"
+        
+        meson setup builddir \
+          --buildtype=$buildtype \
+          --prefix=/usr/local \
+          -Dbase=$base_opt \
+          -Dgood=$good_opt \
+          -Dbad=$bad_opt \
+          -Dugly=$ugly_opt \
+          -Dlibav=$libav_opt \
+          -Ddevtools=enabled \
+          -Dges=enabled \
+          -Drtsp_server=enabled \
+          -Dpython=enabled \
+          -Dintrospection=enabled \
+          -Dgpl=$gpl_opt \
+          -Dtests=disabled \
+          -Dexamples=disabled \
+          -Ddoc=disabled \
+          -Dtools=enabled \
+          -Dorc=enabled \
+          -Dwebrtc=$webrtc_opt \
+          -Dsharp=disabled \
+          -Drs=disabled \
+          -Dgtk_doc=disabled \
+          -Dpackage-name="GStreamer (GitHub Actions macOS)" \
+          -Dpackage-origin="https://github.com/${{ github.repository }}"
+
+    - name: Build
+      run: |
+        meson compile -C builddir --jobs $(sysctl -n hw.logicalcpu)
+
+    - name: Install
+      run: |
+        DESTDIR=${{ github.workspace }}/install meson install -C builddir
+
+    - name: Create tarball
+      run: |
+        cd ${{ github.workspace }}/install
+        tar -czf ../gstreamer-${{ matrix.build_type }}-macos.tar.gz usr/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: gstreamer-${{ matrix.build_type }}-macos
+        path: gstreamer-${{ matrix.build_type }}-macos.tar.gz
+        retention-days: 7
+
+    - name: Show build summary
+      run: |
+        echo "=== Build Summary ==="
+        echo "Platform: macOS $(sw_vers -productVersion)"
+        echo "Build type: ${{ matrix.build_type }}"
+        echo "Artifact: gstreamer-${{ matrix.build_type }}-macos.tar.gz"
+        if [ -f builddir/meson-logs/meson-log.txt ]; then
+          echo "=== Enabled subprojects ==="
+          grep -E "Subproject.*SUCCESS" builddir/meson-logs/meson-log.txt || true
+        fi

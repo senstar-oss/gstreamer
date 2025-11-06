@@ -1,0 +1,258 @@
+name: Build GStreamer for Linux
+
+on:
+  workflow_call:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+  workflow_dispatch:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+
+env:
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: ${{ fromJSON((inputs.build_type == 'both' && '["release","debug"]') || (inputs.build_type == 'debug' && '["debug"]') || '["release"]') }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential \
+          pkg-config \
+          ninja-build \
+          flex \
+          bison \
+          nasm \
+          gettext \
+          libglib2.0-dev \
+          libgirepository1.0-dev \
+          libcairo2-dev \
+          libpango1.0-dev \
+          libgdk-pixbuf2.0-dev \
+          libgtk-3-dev \
+          libjson-glib-dev \
+          libxml2-dev \
+          liborc-0.4-dev \
+          libpulse-dev \
+          libasound2-dev \
+          libjack-jackd2-dev \
+          libopus-dev \
+          libvorbis-dev \
+          libtheora-dev \
+          libvpx-dev \
+          libmp3lame-dev \
+          libx264-dev \
+          libx265-dev \
+          libaom-dev \
+          libdav1d-dev \
+          libva-dev \
+          libdrm-dev \
+          libgl1-mesa-dev \
+          libegl1-mesa-dev \
+          libgles2-mesa-dev \
+          libwayland-dev \
+          libxv-dev \
+          libxext-dev \
+          libxrandr-dev \
+          libnice-dev \
+          libsrtp2-dev \
+          libwebrtc-audio-processing-dev \
+          libopencore-amrnb-dev \
+          libopencore-amrwb-dev \
+          libtwolame-dev \
+          libfaad-dev \
+          libmpg123-dev \
+          libspeex-dev \
+          libflac-dev \
+          libopenjp2-7-dev \
+          librtmp-dev \
+          libcurl4-openssl-dev \
+          libssl-dev \
+          libshout3-dev \
+          libtag1-dev \
+          libwavpack-dev \
+          libaa1-dev \
+          libcaca-dev \
+          libdv4-dev \
+          libiec61883-dev \
+          libavc1394-dev \
+          libraw1394-dev \
+          libdc1394-dev \
+          libv4l-dev \
+          libbluetooth-dev \
+          libusb-1.0-0-dev \
+          libsbc1 \
+          libsbc-dev \
+          libgudev-1.0-dev \
+          libcdparanoia-dev \
+          libcdio-dev \
+          libdvdread-dev \
+          libdvdnav-dev \
+          libmodplug-dev \
+          libkate-dev \
+          liblilv-dev \
+          librsvg2-dev \
+          libgme-dev \
+          libbs2b-dev \
+          libsndfile1-dev \
+          libfftw3-dev \
+          zlib1g-dev \
+          libbz2-dev \
+          liblzma-dev
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install meson
+
+    - name: Configure build
+      run: |
+        buildtype="${{ matrix.build_type == 'debug' && 'debug' || 'release' }}"
+        
+        # Parse comma-separated plugin and feature lists
+        plugins="${{ inputs.plugins }}"
+        features="${{ inputs.features }}"
+        
+        # Set plugin options based on comma-separated list
+        base_opt="disabled"
+        good_opt="disabled"
+        bad_opt="disabled"
+        ugly_opt="disabled"
+        libav_opt="disabled"
+        
+        if [[ "$plugins" == *"base"* ]]; then base_opt="enabled"; fi
+        if [[ "$plugins" == *"good"* ]]; then good_opt="enabled"; fi
+        if [[ "$plugins" == *"bad"* ]]; then bad_opt="enabled"; fi
+        if [[ "$plugins" == *"ugly"* ]]; then ugly_opt="enabled"; fi
+        if [[ "$plugins" == *"libav"* ]]; then libav_opt="enabled"; fi
+        
+        # Set feature options based on comma-separated list
+        gpl_opt="disabled"
+        webrtc_opt="disabled"
+        tests_opt="disabled"
+        
+        if [[ "$features" == *"gpl"* ]]; then gpl_opt="enabled"; fi
+        if [[ "$features" == *"webrtc"* ]]; then webrtc_opt="enabled"; fi
+        if [[ "$features" == *"tests"* ]] && [[ "${{ matrix.build_type }}" == "debug" ]]; then tests_opt="enabled"; fi
+        
+        echo "=== Build Configuration ==="
+        echo "Build type: $buildtype"
+        echo "Base plugins: $base_opt"
+        echo "Good plugins: $good_opt"
+        echo "Bad plugins: $bad_opt"
+        echo "Ugly plugins: $ugly_opt"
+        echo "LibAV plugins: $libav_opt"
+        echo "GPL plugins: $gpl_opt"
+        echo "WebRTC: $webrtc_opt"
+        echo "Tests: $tests_opt"
+        
+        meson setup builddir \
+          --buildtype=$buildtype \
+          --prefix=/usr \
+          --libdir=lib \
+          -Dbase=$base_opt \
+          -Dgood=$good_opt \
+          -Dbad=$bad_opt \
+          -Dugly=$ugly_opt \
+          -Dlibav=$libav_opt \
+          -Ddevtools=enabled \
+          -Dges=enabled \
+          -Drtsp_server=enabled \
+          -Dpython=enabled \
+          -Dintrospection=enabled \
+          -Dgpl=$gpl_opt \
+          -Dtests=$tests_opt \
+          -Dexamples=disabled \
+          -Ddoc=disabled \
+          -Dtools=enabled \
+          -Dorc=enabled \
+          -Dwebrtc=$webrtc_opt \
+          -Dsharp=disabled \
+          -Drs=disabled \
+          -Dgtk_doc=disabled \
+          -Dpackage-name="GStreamer (GitHub Actions Linux)" \
+          -Dpackage-origin="https://github.com/${{ github.repository }}"
+
+    - name: Build
+      run: |
+        meson compile -C builddir --jobs $(nproc)
+
+    - name: Run tests
+      if: matrix.build_type == 'debug' && contains(inputs.features, 'tests')
+      run: |
+        echo "=== Running GStreamer Tests ==="
+        meson test -C builddir --suite gstreamer --timeout-multiplier 2 --print-errorlogs
+      continue-on-error: true
+
+    - name: Install
+      run: |
+        DESTDIR=${{ github.workspace }}/install meson install -C builddir
+
+    - name: Create tarball
+      run: |
+        cd ${{ github.workspace }}/install
+        tar -czf ../gstreamer-${{ matrix.build_type }}-linux.tar.gz usr/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: gstreamer-${{ matrix.build_type }}-linux
+        path: gstreamer-${{ matrix.build_type }}-linux.tar.gz
+        retention-days: 7
+
+    - name: Show build summary
+      run: |
+        echo "=== Build Summary ==="
+        echo "Platform: Linux Ubuntu 22.04"
+        echo "Build type: ${{ matrix.build_type }}"
+        echo "Artifact: gstreamer-${{ matrix.build_type }}-linux.tar.gz"
+        if [ -f builddir/meson-logs/meson-log.txt ]; then
+          echo "=== Enabled subprojects ==="
+          grep -E "Subproject.*SUCCESS" builddir/meson-logs/meson-log.txt || true
+        fi

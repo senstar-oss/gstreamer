@@ -1,0 +1,105 @@
+
+name: Code Quality
+
+on:
+  workflow_dispatch:
+
+jobs:
+  code-style:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install pre-commit gitlint
+        sudo apt-get update
+        sudo apt-get install -y uncrustify
+
+    - name: Check pre-commit hooks
+      run: |
+        pre-commit --version
+        # Run pre-commit on all files
+        pre-commit run --all-files --show-diff-on-failure
+      continue-on-error: true
+
+    - name: Check Python scripts
+      run: |
+        echo "=== Python files found ==="
+        find . -name "*.py" | head -10
+        
+        echo "=== Checking Python syntax ==="
+        python -m py_compile scripts/*.py || true
+        python -m py_compile gst-env.py || true
+
+  meson-validate:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install meson
+      run: pip install meson ninja
+
+    - name: Validate meson build files
+      run: |
+        echo "=== Validating main meson.build ==="
+        meson setup --dry-run build-validate || true
+        
+        echo "=== Checking meson.options ==="
+        meson configure build-validate || true
+        
+        echo "=== Subproject validation ==="
+        meson subprojects update --reset || true
+
+  security-scan:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+      continue-on-error: true
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+      continue-on-error: true
+
+    - name: Check for sensitive files
+      run: |
+        echo "=== Checking for sensitive patterns ==="
+        
+        # Check for potential secrets (basic patterns)
+        echo "Checking for potential API keys..."
+        grep -r -i "api[_-]key\|secret\|password\|token" . \
+          --include="*.txt" --include="*.md" --include="*.py" \
+          --exclude-dir=".git" --exclude-dir="build*" || echo "No obvious secrets found"
+        
+        # Check for TODO/FIXME comments that might indicate security issues
+        echo "Checking for security-related TODOs..."
+        grep -r -i "todo.*security\|fixme.*security\|hack.*security" . \
+          --include="*.c" --include="*.h" --include="*.py" \
+          --exclude-dir=".git" --exclude-dir="build*" || echo "No security TODOs found"

@@ -1,0 +1,180 @@
+name: Build GStreamer for Windows (MSVC)
+
+on:
+  workflow_call:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+  workflow_dispatch:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+        build_type: ${{ fromJSON((inputs.build_type == 'both' && '["release","debug"]') || (inputs.build_type == 'debug' && '["debug"]') || '["release"]') }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install meson ninja
+
+    - name: Setup Visual Studio environment
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Configure build with MSVC
+      run: |
+        # Parse comma-separated plugin and feature lists
+        $plugins = "${{ inputs.plugins }}"
+        $features = "${{ inputs.features }}"
+        
+        # Set plugin options based on comma-separated list
+        $base_opt = "disabled"
+        $good_opt = "disabled"
+        $bad_opt = "disabled"
+        $ugly_opt = "disabled"
+        $libav_opt = "disabled"
+        
+        if ($plugins -like "*base*") { $base_opt = "enabled" }
+        if ($plugins -like "*good*") { $good_opt = "enabled" }
+        if ($plugins -like "*bad*") { $bad_opt = "enabled" }
+        if ($plugins -like "*ugly*") { $ugly_opt = "enabled" }
+        if ($plugins -like "*libav*") { $libav_opt = "enabled" }
+        
+        # Set feature options based on comma-separated list
+        $gpl_opt = "disabled"
+        $webrtc_opt = "disabled"
+        
+        if ($features -like "*gpl*") { $gpl_opt = "enabled" }
+        if ($features -like "*webrtc*") { $webrtc_opt = "enabled" }
+        
+        $buildtype = "${{ matrix.build_type == 'debug' && 'debug' || 'release' }}"
+        
+        Write-Host "=== Build Configuration ==="
+        Write-Host "Platform: Windows MSVC/Visual Studio"
+        Write-Host "Build type: $buildtype"
+        Write-Host "Base plugins: $base_opt"
+        Write-Host "Good plugins: $good_opt"
+        Write-Host "Bad plugins: $bad_opt"
+        Write-Host "Ugly plugins: $ugly_opt"
+        Write-Host "LibAV plugins: $libav_opt"
+        Write-Host "GPL plugins: $gpl_opt"
+        Write-Host "WebRTC: $webrtc_opt"
+        
+        $mesonArgs = @(
+          'setup',
+          '--vsenv',
+          'builddir',
+          "--buildtype=$buildtype",
+          '--prefix=C:/gstreamer',
+          '--libdir=lib',
+          "-Dbase=$base_opt",
+          "-Dgood=$good_opt",
+          "-Dbad=$bad_opt",
+          "-Dugly=$ugly_opt",
+          "-Dlibav=$libav_opt",
+          '-Ddevtools=enabled',
+          '-Dges=enabled',
+          '-Drtsp_server=enabled',
+          '-Dpython=disabled',
+          '-Dintrospection=disabled',
+          "-Dgpl=$gpl_opt",
+          '-Dtests=disabled',
+          '-Dexamples=disabled',
+          '-Ddoc=disabled',
+          '-Dtools=enabled',
+          '-Dorc=enabled',
+          "-Dwebrtc=$webrtc_opt",
+          '-Dsharp=disabled',
+          '-Drs=disabled',
+          '-Dgtk_doc=disabled',
+          "-Dpackage-name=GStreamer (GitHub Actions MSVC)",
+          "-Dpackage-origin=https://github.com/${{ github.repository }}"
+        )
+
+        meson @mesonArgs
+
+    - name: Build with MSVC
+      run: |
+        meson compile -C builddir --jobs $env:NUMBER_OF_PROCESSORS
+
+    - name: Test GStreamer installation
+      run: |
+        # Test that gst-inspect works
+        Write-Host "=== Testing GStreamer Installation ==="
+        try {
+          builddir\gst-env.py gst-inspect-1.0.exe --version
+          Write-Host "✅ GStreamer installation test passed"
+        } catch {
+          Write-Host "❌ GStreamer installation test failed: $_"
+        }
+
+    - name: Install
+      run: |
+        $installPath = Join-Path $PWD 'install'
+        meson install -C builddir --destdir "$installPath"
+
+    - name: Create MSVC zip archive
+      run: |
+        $installPath = Join-Path $PWD 'install'
+        if (-not (Test-Path $installPath)) {
+          throw "Install directory not found at $installPath"
+        }
+        Compress-Archive -Path (Join-Path $installPath '*') -DestinationPath gstreamer-${{ matrix.build_type }}-windows-msvc-${{ matrix.arch }}.zip
+
+    - name: Upload MSVC build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: gstreamer-${{ matrix.build_type }}-windows-msvc-${{ matrix.arch }}
+        path: gstreamer-${{ matrix.build_type }}-windows-msvc-${{ matrix.arch }}.zip
+        retention-days: 7
+
+    - name: Show build summary
+      run: |
+        Write-Host "=== Build Summary ==="
+        Write-Host "Platform: Windows MSVC/Visual Studio 2022"
+        Write-Host "Architecture: ${{ matrix.arch }}"
+        Write-Host "Build type: ${{ matrix.build_type }}"
+        Write-Host "Artifact: gstreamer-${{ matrix.build_type }}-windows-msvc-${{ matrix.arch }}.zip"

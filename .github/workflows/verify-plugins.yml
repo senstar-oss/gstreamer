@@ -1,0 +1,161 @@
+name: Verify GStreamer Plugins
+
+on:
+  workflow_call:
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Download Linux build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: gstreamer-*-linux
+        merge-multiple: true
+
+    - name: Extract and verify plugins
+      run: |
+        # Find and extract the release build (prefer release over debug for verification)
+        if [ -f gstreamer-release-linux.tar.gz ]; then
+          ARCHIVE="gstreamer-release-linux.tar.gz"
+          BUILD_TYPE="release"
+        elif [ -f gstreamer-debug-linux.tar.gz ]; then
+          ARCHIVE="gstreamer-debug-linux.tar.gz"
+          BUILD_TYPE="debug"
+        else
+          echo "❌ No Linux build artifacts found for verification"
+          ls -la
+          exit 1
+        fi
+        
+        echo "=== Extracting $ARCHIVE for plugin verification ==="
+        tar -xzf "$ARCHIVE"
+        
+        # Set up GStreamer environment
+        export GST_PLUGIN_PATH=$PWD/usr/lib/gstreamer-1.0
+        export LD_LIBRARY_PATH=$PWD/usr/lib
+        export PATH=$PWD/usr/bin:$PATH
+        
+        # Basic GStreamer version check
+        echo "=== GStreamer Version ==="
+        $PWD/usr/bin/gst-inspect-1.0 --version
+        
+        echo ""
+        echo "=== Plugin Verification Summary ==="
+        
+        # Count total plugins
+        TOTAL_PLUGINS=$($PWD/usr/bin/gst-inspect-1.0 | wc -l)
+        echo "Total plugins found: $TOTAL_PLUGINS"
+        
+        # Verify core plugins
+        echo ""
+        echo "=== Core GStreamer Plugins ==="
+        CORE_COUNT=$($PWD/usr/bin/gst-inspect-1.0 | grep -E "(coreelements|coretracers)" | wc -l)
+        $PWD/usr/bin/gst-inspect-1.0 | grep -E "(coreelements|coretracers)" || echo "No core plugins found"
+        echo "Core plugins: $CORE_COUNT"
+        
+        # Verify base plugins
+        echo ""
+        echo "=== Base Plugins ==="
+        BASE_COUNT=$($PWD/usr/bin/gst-inspect-1.0 | grep -E "(playback|audiorate|videorate|typefindfunctions|audioconvert|videoconvert)" | wc -l)
+        $PWD/usr/bin/gst-inspect-1.0 | grep -E "(playback|audiorate|videorate|typefindfunctions|audioconvert|videoconvert)" || echo "No base plugins found"
+        echo "Base plugins: $BASE_COUNT"
+        
+        # Verify good plugins
+        echo ""
+        echo "=== Good Plugins ==="
+        GOOD_COUNT=$($PWD/usr/bin/gst-inspect-1.0 | grep -E "(autodetect|videomixer|audioparsers|videofilter|matroska|flv|avi)" | wc -l)
+        $PWD/usr/bin/gst-inspect-1.0 | grep -E "(autodetect|videomixer|audioparsers|videofilter|matroska|flv|avi)" || echo "No good plugins found"
+        echo "Good plugins: $GOOD_COUNT"
+        
+        # Verify bad plugins
+        echo ""
+        echo "=== Bad Plugins ==="
+        BAD_COUNT=$($PWD/usr/bin/gst-inspect-1.0 | grep -E "(opencv|webrtc|dtls|srtp|dashdemux|hlsdemux)" | wc -l)
+        $PWD/usr/bin/gst-inspect-1.0 | grep -E "(opencv|webrtc|dtls|srtp|dashdemux|hlsdemux)" || echo "No bad plugins found"
+        echo "Bad plugins: $BAD_COUNT"
+        
+        # Verify ugly plugins
+        echo ""
+        echo "=== Ugly Plugins ==="
+        UGLY_COUNT=$($PWD/usr/bin/gst-inspect-1.0 | grep -E "(lame|x264|dvdread|mad|amrnb|amrwb)" | wc -l)
+        $PWD/usr/bin/gst-inspect-1.0 | grep -E "(lame|x264|dvdread|mad|amrnb|amrwb)" || echo "No ugly plugins found"
+        echo "Ugly plugins: $UGLY_COUNT"
+        
+        # Verify libav plugins
+        echo ""
+        echo "=== LibAV Plugins ==="
+        LIBAV_COUNT=$($PWD/usr/bin/gst-inspect-1.0 | grep -E "libav" | wc -l)
+        $PWD/usr/bin/gst-inspect-1.0 | grep -E "libav" || echo "No libav plugins found"
+        echo "LibAV plugins: $LIBAV_COUNT"
+        
+        # Test basic pipeline functionality
+        echo ""
+        echo "=== Testing Basic Pipeline Functionality ==="
+        
+        # Test videotestsrc pipeline (should work with basic plugins)
+        echo "Testing videotestsrc ! fakesink..."
+        if timeout 5s $PWD/usr/bin/gst-launch-1.0 videotestsrc num-buffers=10 ! fakesink; then
+          echo "✅ Basic video pipeline test passed"
+        else
+          echo "❌ Basic video pipeline test failed"
+        fi
+        
+        # Test audiotestsrc pipeline
+        echo "Testing audiotestsrc ! fakesink..."
+        if timeout 5s $PWD/usr/bin/gst-launch-1.0 audiotestsrc num-buffers=10 ! fakesink; then
+          echo "✅ Basic audio pipeline test passed"
+        else
+          echo "❌ Basic audio pipeline test failed"
+        fi
+        
+        # Test more complex pipeline if we have enough plugins
+        if [ $TOTAL_PLUGINS -gt 50 ]; then
+          echo "Testing complex pipeline with audioconvert and videoconvert..."
+          if timeout 10s $PWD/usr/bin/gst-launch-1.0 videotestsrc num-buffers=5 ! videoconvert ! fakesink; then
+            echo "✅ Video conversion pipeline test passed"
+          else
+            echo "❌ Video conversion pipeline test failed"
+          fi
+          
+          if timeout 10s $PWD/usr/bin/gst-launch-1.0 audiotestsrc num-buffers=5 ! audioconvert ! fakesink; then
+            echo "✅ Audio conversion pipeline test passed"
+          else
+            echo "❌ Audio conversion pipeline test failed"
+          fi
+        fi
+        
+        echo ""
+        echo "=== Plugin Categories Summary ==="
+        echo "Build type: $BUILD_TYPE"
+        echo "Total plugins: $TOTAL_PLUGINS"
+        echo "Core plugins: $CORE_COUNT"
+        echo "Base plugins: $BASE_COUNT" 
+        echo "Good plugins: $GOOD_COUNT"
+        echo "Bad plugins: $BAD_COUNT"
+        echo "Ugly plugins: $UGLY_COUNT"
+        echo "LibAV plugins: $LIBAV_COUNT"
+        
+        # Set minimum thresholds for a successful build
+        if [ $TOTAL_PLUGINS -lt 20 ]; then
+          echo "❌ Too few plugins found (minimum 20 expected)"
+          exit 1
+        fi
+        
+        if [ $CORE_COUNT -eq 0 ]; then
+          echo "❌ No core plugins found"
+          exit 1
+        fi
+        
+        echo "✅ Plugin verification completed successfully"
+
+    - name: List all available plugins
+      run: |
+        export GST_PLUGIN_PATH=$PWD/usr/lib/gstreamer-1.0
+        export LD_LIBRARY_PATH=$PWD/usr/lib
+        export PATH=$PWD/usr/bin:$PATH
+        
+        echo "=== Complete Plugin List ==="
+        $PWD/usr/bin/gst-inspect-1.0 | sort
+      continue-on-error: true

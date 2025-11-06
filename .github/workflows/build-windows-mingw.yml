@@ -1,0 +1,205 @@
+name: Build GStreamer for Windows (MinGW)
+
+on:
+  workflow_call:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+  workflow_dispatch:
+    inputs:
+      plugins:
+        description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
+        required: false
+        default: 'base,good,bad,ugly,libav'
+        type: string
+      features:
+        description: 'Comma-separated features (gpl,webrtc,tests)'
+        required: false
+        default: 'gpl,webrtc'
+        type: string
+      build_type:
+        description: 'Build type (release, debug, both)'
+        required: false
+        default: 'release'
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+        build_type: ${{ fromJSON((inputs.build_type == 'both' && '["release","debug"]') || (inputs.build_type == 'debug' && '["debug"]') || '["release"]') }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        update: true
+        install: >-
+          git
+          base-devel
+          mingw-w64-ucrt-x86_64-toolchain
+          mingw-w64-ucrt-x86_64-meson
+          mingw-w64-ucrt-x86_64-ninja
+          mingw-w64-ucrt-x86_64-python
+          mingw-w64-ucrt-x86_64-python-pip
+          mingw-w64-ucrt-x86_64-pkg-config
+          mingw-w64-ucrt-x86_64-glib2
+          mingw-w64-ucrt-x86_64-gobject-introspection
+          mingw-w64-ucrt-x86_64-orc
+          mingw-w64-ucrt-x86_64-cairo
+          mingw-w64-ucrt-x86_64-pango
+          mingw-w64-ucrt-x86_64-gdk-pixbuf2
+          mingw-w64-ucrt-x86_64-libsoup3
+          mingw-w64-ucrt-x86_64-json-glib
+          mingw-w64-ucrt-x86_64-libxml2
+          mingw-w64-ucrt-x86_64-opus
+          mingw-w64-ucrt-x86_64-libvorbis
+          mingw-w64-ucrt-x86_64-libtheora
+          mingw-w64-ucrt-x86_64-libvpx
+          mingw-w64-ucrt-x86_64-lame
+          mingw-w64-ucrt-x86_64-x264
+          mingw-w64-ucrt-x86_64-x265
+          mingw-w64-ucrt-x86_64-aom
+          mingw-w64-ucrt-x86_64-dav1d
+          mingw-w64-ucrt-x86_64-libnice
+          mingw-w64-ucrt-x86_64-libsrtp
+          mingw-w64-ucrt-x86_64-opencore-amr
+          mingw-w64-ucrt-x86_64-vo-amrwbenc
+          mingw-w64-ucrt-x86_64-twolame
+          mingw-w64-ucrt-x86_64-faac
+          mingw-w64-ucrt-x86_64-faad2
+          mingw-w64-ucrt-x86_64-mpg123
+          mingw-w64-ucrt-x86_64-speex
+          mingw-w64-ucrt-x86_64-flac
+          mingw-w64-ucrt-x86_64-openjpeg2
+          mingw-w64-ucrt-x86_64-curl
+          mingw-w64-ucrt-x86_64-libshout
+          mingw-w64-ucrt-x86_64-taglib
+          mingw-w64-ucrt-x86_64-wavpack
+          mingw-w64-ucrt-x86_64-libmodplug
+          mingw-w64-ucrt-x86_64-librsvg
+          mingw-w64-ucrt-x86_64-libsndfile
+          mingw-w64-ucrt-x86_64-fftw
+
+    - name: Configure and build with MSYS2
+      shell: msys2 {0}
+      run: |
+        buildtype="${{ matrix.build_type == 'debug' && 'debug' || 'release' }}"
+        
+        # Parse comma-separated plugin and feature lists
+        plugins="${{ inputs.plugins }}"
+        features="${{ inputs.features }}"
+        
+        # Set plugin options based on comma-separated list
+        base_opt="disabled"
+        good_opt="disabled"
+        bad_opt="disabled"
+        ugly_opt="disabled"
+        libav_opt="disabled"
+        
+        if [[ "$plugins" == *"base"* ]]; then base_opt="enabled"; fi
+        if [[ "$plugins" == *"good"* ]]; then good_opt="enabled"; fi
+        if [[ "$plugins" == *"bad"* ]]; then bad_opt="enabled"; fi
+        if [[ "$plugins" == *"ugly"* ]]; then ugly_opt="enabled"; fi
+        if [[ "$plugins" == *"libav"* ]]; then libav_opt="enabled"; fi
+        
+        # Set feature options based on comma-separated list
+        gpl_opt="disabled"
+        webrtc_opt="disabled"
+        
+        if [[ "$features" == *"gpl"* ]]; then gpl_opt="enabled"; fi
+        if [[ "$features" == *"webrtc"* ]]; then webrtc_opt="enabled"; fi
+        
+        echo "=== Build Configuration ==="
+        echo "Platform: Windows MinGW/MSYS2"
+        echo "Build type: $buildtype"
+        echo "Base plugins: $base_opt"
+        echo "Good plugins: $good_opt"
+        echo "Bad plugins: $bad_opt"
+        echo "Ugly plugins: $ugly_opt"
+        echo "LibAV plugins: $libav_opt"
+        echo "GPL plugins: $gpl_opt"
+        echo "WebRTC: $webrtc_opt"
+        
+        meson setup builddir \
+          --buildtype=$buildtype \
+          --prefix=$MINGW_PREFIX \
+          -Dbase=$base_opt \
+          -Dgood=$good_opt \
+          -Dbad=$bad_opt \
+          -Dugly=$ugly_opt \
+          -Dlibav=$libav_opt \
+          -Ddevtools=enabled \
+          -Dges=enabled \
+          -Drtsp_server=enabled \
+          -Dpython=disabled \
+          -Dintrospection=disabled \
+          -Dgpl=$gpl_opt \
+          -Dtests=disabled \
+          -Dexamples=disabled \
+          -Ddoc=disabled \
+          -Dtools=enabled \
+          -Dorc=enabled \
+          -Dwebrtc=$webrtc_opt \
+          -Dsharp=disabled \
+          -Drs=disabled \
+          -Dgtk_doc=disabled \
+          -Dpackage-name="GStreamer (GitHub Actions MinGW)" \
+          -Dpackage-origin="https://github.com/${{ github.repository }}"
+
+    - name: Compile
+      shell: msys2 {0}
+      run: |
+        meson compile -C builddir --jobs $(nproc)
+
+    - name: Install
+      shell: msys2 {0}
+      run: |
+        DESTDIR=$PWD/install meson install -C builddir
+
+    - name: Create zip archive
+      run: |
+        Compress-Archive -Path install\* -DestinationPath gstreamer-${{ matrix.build_type }}-windows-mingw-${{ matrix.arch }}.zip
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: gstreamer-${{ matrix.build_type }}-windows-mingw-${{ matrix.arch }}
+        path: gstreamer-${{ matrix.build_type }}-windows-mingw-${{ matrix.arch }}.zip
+        retention-days: 7
+
+    - name: Show build summary
+      run: |
+        echo "=== Build Summary ==="
+        echo "Platform: Windows MinGW/MSYS2"
+        echo "Architecture: ${{ matrix.arch }}"
+        echo "Build type: ${{ matrix.build_type }}"
+        echo "Artifact: gstreamer-${{ matrix.build_type }}-windows-mingw-${{ matrix.arch }}.zip"

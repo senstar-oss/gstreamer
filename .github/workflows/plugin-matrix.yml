@@ -1,0 +1,246 @@
+name: GStreamer Plugin Matrix
+
+on:
+  push:
+    paths:
+      - 'subprojects/gst-plugins-*/**'
+      - 'meson.build'
+      - 'meson.options'
+  pull_request:
+    paths:
+      - 'subprojects/gst-plugins-*/**'
+      - 'meson.build'
+      - 'meson.options'
+  workflow_dispatch:
+    inputs:
+      test_specific_plugin:
+        description: 'Test specific plugin (e.g., gst-plugins-good)'
+        required: false
+        type: choice
+        options:
+        - 'all'
+        - 'gst-plugins-base'
+        - 'gst-plugins-good'
+        - 'gst-plugins-bad'
+        - 'gst-plugins-ugly'
+        - 'gst-libav'
+
+jobs:
+  plugin-matrix:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Base Only"
+            plugins: "-Dbase=enabled -Dgood=disabled -Dbad=disabled -Dugly=disabled -Dlibav=disabled"
+          - name: "Base + Good"
+            plugins: "-Dbase=enabled -Dgood=enabled -Dbad=disabled -Dugly=disabled -Dlibav=disabled"
+          - name: "Base + Good + Bad"
+            plugins: "-Dbase=enabled -Dgood=enabled -Dbad=enabled -Dugly=disabled -Dlibav=disabled"
+          - name: "Base + Good + Ugly"
+            plugins: "-Dbase=enabled -Dgood=enabled -Dbad=disabled -Dugly=enabled -Dlibav=disabled"
+          - name: "All except LibAV"
+            plugins: "-Dbase=enabled -Dgood=enabled -Dbad=enabled -Dugly=enabled -Dlibav=disabled"
+          - name: "All plugins"
+            plugins: "-Dbase=enabled -Dgood=enabled -Dbad=enabled -Dugly=enabled -Dlibav=enabled"
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 1
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          pkg-config \
+          ninja-build \
+          flex \
+          bison \
+          nasm \
+          gettext \
+          libglib2.0-dev \
+          libgirepository1.0-dev \
+          libcairo2-dev \
+          libpango1.0-dev \
+          libgdk-pixbuf2.0-dev \
+          libsoup2.4-dev \
+          libjson-glib-dev \
+          libxml2-dev \
+          liborc-0.4-dev \
+          libopus-dev \
+          libvorbis-dev \
+          libtheora-dev \
+          libvpx-dev \
+          libmp3lame-dev \
+          libx264-dev \
+          libva-dev \
+          libdrm-dev \
+          libgl1-mesa-dev \
+          libnice-dev \
+          libsrtp2-dev
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install meson
+
+    - name: Configure build - ${{ matrix.name }}
+      run: |
+        meson setup builddir \
+          --buildtype=release \
+          ${{ matrix.plugins }} \
+          -Ddevtools=enabled \
+          -Dges=enabled \
+          -Drtsp_server=enabled \
+          -Dpython=disabled \
+          -Dintrospection=disabled \
+          -Dgpl=enabled \
+          -Dtests=disabled \
+          -Dexamples=disabled \
+          -Ddoc=disabled \
+          -Dtools=enabled \
+          -Dorc=enabled \
+          -Dsharp=disabled \
+          -Drs=disabled \
+          -Dgtk_doc=disabled
+
+    - name: Build - ${{ matrix.name }}
+      run: |
+        meson compile -C builddir --jobs $(nproc)
+
+    - name: List plugins - ${{ matrix.name }}
+      run: |
+        echo "=== Plugin configuration: ${{ matrix.name }} ==="
+        find builddir -name "*.so" -path "*/gstreamer-1.0/*" | sort
+        echo "=== Plugin count ==="
+        find builddir -name "*.so" -path "*/gstreamer-1.0/*" | wc -l
+
+  specific-plugin-test:
+    if: github.event.inputs.test_specific_plugin != 'all' && github.event.inputs.test_specific_plugin != ''
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          pkg-config \
+          ninja-build \
+          flex \
+          bison \
+          nasm \
+          gettext \
+          libglib2.0-dev \
+          libgirepository1.0-dev \
+          libcairo2-dev \
+          libpango1.0-dev \
+          libgdk-pixbuf2.0-dev \
+          libsoup2.4-dev \
+          libjson-glib-dev \
+          libxml2-dev \
+          liborc-0.4-dev \
+          libopus-dev \
+          libvorbis-dev \
+          libtheora-dev \
+          libvpx-dev \
+          libmp3lame-dev \
+          libx264-dev \
+          libva-dev \
+          libdrm-dev \
+          libgl1-mesa-dev \
+          libnice-dev \
+          libsrtp2-dev
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install meson
+
+    - name: Build specific plugin
+      run: |
+        # Build only the core and the requested plugin
+        case "${{ github.event.inputs.test_specific_plugin }}" in
+          "gst-plugins-base")
+            plugin_args="-Dbase=enabled -Dgood=disabled -Dbad=disabled -Dugly=disabled -Dlibav=disabled"
+            ;;
+          "gst-plugins-good")
+            plugin_args="-Dbase=enabled -Dgood=enabled -Dbad=disabled -Dugly=disabled -Dlibav=disabled"
+            ;;
+          "gst-plugins-bad")
+            plugin_args="-Dbase=enabled -Dgood=disabled -Dbad=enabled -Dugly=disabled -Dlibav=disabled"
+            ;;
+          "gst-plugins-ugly")
+            plugin_args="-Dbase=enabled -Dgood=disabled -Dbad=disabled -Dugly=enabled -Dlibav=disabled"
+            ;;
+          "gst-libav")
+            plugin_args="-Dbase=enabled -Dgood=disabled -Dbad=disabled -Dugly=disabled -Dlibav=enabled"
+            ;;
+          *)
+            echo "Unknown plugin: ${{ github.event.inputs.test_specific_plugin }}"
+            exit 1
+            ;;
+        esac
+        
+        meson setup builddir \
+          --buildtype=debug \
+          $plugin_args \
+          -Ddevtools=enabled \
+          -Dtests=enabled \
+          -Dexamples=disabled \
+          -Ddoc=disabled \
+          -Dintrospection=disabled
+
+        meson compile -C builddir --jobs $(nproc)
+
+    - name: Test specific plugin
+      run: |
+        # Run tests for the specific plugin
+        meson test -C builddir --suite ${{ github.event.inputs.test_specific_plugin }} --timeout-multiplier 2 --print-errorlogs
+      continue-on-error: true
+
+  dependency-check:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install meson
+      run: pip install meson
+
+    - name: Check subproject dependencies
+      run: |
+        echo "=== Subproject wrap files ==="
+        find subprojects -name "*.wrap" | sort
+        
+        echo "=== Subproject directories ==="
+        find subprojects -type d -maxdepth 1 | grep -v "^subprojects$" | sort
+        
+        echo "=== Meson subproject status ==="
+        meson subprojects status || true

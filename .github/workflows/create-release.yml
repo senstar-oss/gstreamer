@@ -1,0 +1,177 @@
+name: Create GStreamer Release
+
+on:
+  workflow_call:
+    inputs:
+      has_linux:
+        description: 'Linux build succeeded'
+        required: false
+        default: false
+        type: boolean
+      has_windows_mingw:
+        description: 'Windows MinGW build succeeded' 
+        required: false
+        default: false
+        type: boolean
+      has_windows_msvc:
+        description: 'Windows MSVC build succeeded'
+        required: false
+        default: false
+        type: boolean
+      has_macos:
+        description: 'macOS build succeeded'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  create-release:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4
+
+    - name: List available artifacts
+      run: |
+        echo "=== Available Build Artifacts ==="
+        find . -name "*.tar.gz" -o -name "*.zip" | sort
+        
+        echo ""
+        echo "=== Build Status Summary ==="
+        echo "Linux: ${{ inputs.has_linux && '✅ Success' || '❌ Failed/Skipped' }}"
+        echo "Windows MinGW: ${{ inputs.has_windows_mingw && '✅ Success' || '❌ Failed/Skipped' }}"
+        echo "Windows MSVC: ${{ inputs.has_windows_msvc && '✅ Success' || '❌ Failed/Skipped' }}"
+        echo "macOS: ${{ inputs.has_macos && '✅ Success' || '❌ Failed/Skipped' }}"
+
+    - name: Generate release notes
+      run: |
+        cat > release-notes.md << 'EOF'
+        # GStreamer Build ${{ github.run_number }}
+        
+        Automated build of GStreamer with modular workflow architecture.
+        
+        ## Build Information
+        - **Commit**: ${{ github.sha }}
+        - **Branch**: ${{ github.ref_name }}
+        - **Build Number**: ${{ github.run_number }}
+        - **Workflow**: Modular multi-platform build
+        
+        ## Platform Support
+        ${{ inputs.has_linux && '✅' || '❌' }} **Linux** (Ubuntu 22.04)
+        ${{ inputs.has_windows_mingw && '✅' || '❌' }} **Windows MinGW** (MSYS2/GCC)
+        ${{ inputs.has_windows_msvc && '✅' || '❌' }} **Windows MSVC** (Visual Studio 2022)
+        ${{ inputs.has_macos && '✅' || '❌' }} **macOS** (Homebrew dependencies)
+        
+        ## Plugin Sets Included
+        - **Core GStreamer plugins** - Essential framework components
+        - **Base plugins** - Fundamental audio/video processing and playback
+        - **Good plugins** - Stable format support, effects, and codecs
+        - **Bad plugins** - Experimental features, WebRTC, OpenCV, advanced codecs
+        - **Ugly plugins** - Patent-encumbered codecs (MP3, H.264, DVD, etc.)
+        - **LibAV plugins** - FFmpeg integration for extensive codec support
+        - **GES** (GStreamer Editing Services) - Non-linear video editing
+        - **RTSP Server** - Real Time Streaming Protocol server
+        - **Development tools** - gst-inspect, gst-launch, debugging tools
+        
+        ## Key Features
+        - ✅ **GPL plugins enabled** - Includes patent-encumbered codecs
+        - ✅ **WebRTC support** - Real-time communication capabilities
+        - ✅ **Hardware acceleration** - VA-API, VDPAU, platform-specific optimizations
+        - ✅ **ORC optimizations** - SIMD performance improvements
+        - ✅ **Introspection data** - Complete API bindings support (Linux/macOS)
+        
+        ## Usage Instructions
+        
+        ### Linux/macOS
+        ```bash
+        # Extract the tarball
+        tar -xzf gstreamer-*-linux.tar.gz  # or gstreamer-*-macos.tar.gz
+        
+        # Set environment variables
+        export GST_PLUGIN_PATH=$PWD/usr/lib/gstreamer-1.0
+        export LD_LIBRARY_PATH=$PWD/usr/lib  
+        export PATH=$PWD/usr/bin:$PATH
+        
+        # Test installation
+        gst-inspect-1.0 --version
+        gst-launch-1.0 videotestsrc ! autovideosink
+        ```
+        
+        ### Windows
+        ```powershell
+        # Extract the zip file
+        # Add bin directory to PATH
+        $env:PATH = "path\to\extracted\bin;$env:PATH"
+        
+        # Test installation
+        gst-inspect-1.0.exe --version
+        gst-launch-1.0.exe videotestsrc ! autovideosink
+        ```
+        
+        ## Artifacts Description
+        ${{ inputs.has_linux && '- `gstreamer-*-linux.tar.gz` - Complete Linux build with full plugin set' || '' }}
+        ${{ inputs.has_windows_mingw && '- `gstreamer-*-windows-mingw-*.zip` - Windows build using MinGW/GCC toolchain' || '' }}
+        ${{ inputs.has_windows_msvc && '- `gstreamer-*-windows-msvc-*.zip` - Windows build using Visual Studio/MSVC' || '' }}
+        ${{ inputs.has_macos && '- `gstreamer-*-macos.tar.gz` - macOS build with Homebrew dependencies' || '' }}
+        
+        ## Build Architecture
+        This release uses a modular workflow architecture:
+        - **Dispatcher workflow** - Orchestrates parallel builds based on user inputs
+        - **Platform-specific workflows** - Dedicated build workflows for each platform
+        - **Plugin verification** - Automated testing of built plugins
+        - **Conditional building** - Build only selected platforms and plugin sets
+        
+        ---
+        
+        **Note**: This is an automated build. For stable releases, please use official GStreamer releases from https://gstreamer.freedesktop.org/
+        EOF
+
+    - name: Prepare release files
+      run: |
+        # Create a directory for release files
+        mkdir -p release-files
+        
+        # Copy artifacts to release directory with consistent naming
+        ${{ inputs.has_linux && 'find . -name "gstreamer-*-linux.tar.gz" -exec cp {} release-files/ \;' || 'echo "No Linux artifacts to copy"' }}
+        ${{ inputs.has_windows_mingw && 'find . -name "gstreamer-*-windows-mingw-*.zip" -exec cp {} release-files/ \;' || 'echo "No MinGW artifacts to copy"' }}  
+        ${{ inputs.has_windows_msvc && 'find . -name "gstreamer-*-windows-msvc-*.zip" -exec cp {} release-files/ \;' || 'echo "No MSVC artifacts to copy"' }}
+        ${{ inputs.has_macos && 'find . -name "gstreamer-*-macos.tar.gz" -exec cp {} release-files/ \;' || 'echo "No macOS artifacts to copy"' }}
+        
+        echo "=== Release Files ==="
+        ls -la release-files/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: build-${{ github.run_number }}
+        name: GStreamer Build ${{ github.run_number }}
+        body_path: release-notes.md
+        files: release-files/*
+        draft: false
+        prerelease: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Release summary
+      run: |
+        echo "=== Release Created Successfully ==="
+        echo "Tag: build-${{ github.run_number }}"
+        echo "Release URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/build-${{ github.run_number }}"
+        
+        # Count successful builds
+        SUCCESS_COUNT=0
+        ${{ inputs.has_linux && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        ${{ inputs.has_windows_mingw && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        ${{ inputs.has_windows_msvc && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        ${{ inputs.has_macos && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        
+        echo "Successful builds: $SUCCESS_COUNT/4 platforms"
+        
+        if [ $SUCCESS_COUNT -eq 0 ]; then
+          echo "⚠️ No builds succeeded - empty release created"
+        elif [ $SUCCESS_COUNT -eq 4 ]; then
+          echo "🎉 All platform builds succeeded!"
+        else
+          echo "✅ Partial success - some platform builds completed"
+        fi
