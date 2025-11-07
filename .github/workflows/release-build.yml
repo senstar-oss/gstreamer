@@ -1,0 +1,151 @@
+name: Release Build and Publish
+
+on:
+  release:
+    types: [created, published]
+
+jobs:
+  build-linux:
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      plugins: 'base,good,bad,ugly,libav'
+      features: 'gpl,webrtc'
+      build_type: 'release'
+
+  build-windows-mingw:
+    uses: ./.github/workflows/build-windows-mingw.yml
+    with:
+      plugins: 'base,good,bad,ugly,libav'
+      features: 'gpl,webrtc'
+      build_type: 'release'
+
+  build-windows-msvc:
+    uses: ./.github/workflows/build-windows-msvc.yml
+    with:
+      plugins: 'base,good,bad,ugly,libav'
+      features: 'gpl,webrtc'
+      build_type: 'release'
+
+  build-macos:
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      plugins: 'base,good,bad,ugly,libav'
+      features: 'gpl,webrtc'
+      build_type: 'release'
+
+  verify-plugins:
+    needs: [build-linux]
+    if: always() && (needs.build-linux.result == 'success')
+    uses: ./.github/workflows/verify-plugins.yml
+
+  publish-to-release:
+    needs: [build-linux, build-windows-mingw, build-windows-msvc, build-macos, verify-plugins]
+    if: always()
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4
+
+    - name: List available artifacts
+      run: |
+        echo "=== Available Build Artifacts ==="
+        find . -name "*.tar.gz" -o -name "*.zip" | sort
+        
+        echo ""
+        echo "=== Build Status Summary ==="
+        echo "Linux: ${{ needs.build-linux.result == 'success' && '✅ Success' || '❌ Failed/Skipped' }}"
+        echo "Windows MinGW: ${{ needs.build-windows-mingw.result == 'success' && '✅ Success' || '❌ Failed/Skipped' }}"
+        echo "Windows MSVC: ${{ needs.build-windows-msvc.result == 'success' && '✅ Success' || '❌ Failed/Skipped' }}"
+        echo "macOS: ${{ needs.build-macos.result == 'success' && '✅ Success' || '❌ Failed/Skipped' }}"
+
+    - name: Prepare release files
+      run: |
+        # Create a directory for release files
+        mkdir -p release-files
+        
+        # Copy artifacts to release directory with consistent naming
+        ${{ needs.build-linux.result == 'success' && 'find . -name "gstreamer-*-linux.tar.gz" -exec cp {} release-files/ \;' || 'echo "No Linux artifacts to copy"' }}
+        ${{ needs.build-windows-mingw.result == 'success' && 'find . -name "gstreamer-*-windows-mingw-*.zip" -exec cp {} release-files/ \;' || 'echo "No MinGW artifacts to copy"' }}  
+        ${{ needs.build-windows-msvc.result == 'success' && 'find . -name "gstreamer-*-windows-msvc-*.zip" -exec cp {} release-files/ \;' || 'echo "No MSVC artifacts to copy"' }}
+        ${{ needs.build-macos.result == 'success' && 'find . -name "gstreamer-*-macos.tar.gz" -exec cp {} release-files/ \;' || 'echo "No macOS artifacts to copy"' }}
+        
+        echo "=== Release Files ==="
+        ls -la release-files/
+
+    - name: Upload artifacts to release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.release.tag_name }}
+        files: release-files/*
+        fail_on_unmatched_files: false
+        append_body: true
+        body: |
+          
+          ## Build Information
+          - **Commit**: ${{ github.sha }}
+          - **Tag**: ${{ github.event.release.tag_name }}
+          - **Build Timestamp**: ${{ github.event.release.created_at }}
+          
+          ## Platform Support
+          ${{ needs.build-linux.result == 'success' && '✅' || '❌' }} **Linux** (Ubuntu 22.04)
+          ${{ needs.build-windows-mingw.result == 'success' && '✅' || '❌' }} **Windows MinGW** (MSYS2/GCC)
+          ${{ needs.build-windows-msvc.result == 'success' && '✅' || '❌' }} **Windows MSVC** (Visual Studio 2022)
+          ${{ needs.build-macos.result == 'success' && '✅' || '❌' }} **macOS** (Homebrew dependencies)
+          
+          ## Artifacts Description
+          ${{ needs.build-linux.result == 'success' && '- `gstreamer-release-linux.tar.gz` - Complete Linux build with full plugin set' || '' }}
+          ${{ needs.build-windows-mingw.result == 'success' && '- `gstreamer-release-windows-mingw-x64.zip` - Windows build using MinGW/GCC toolchain' || '' }}
+          ${{ needs.build-windows-msvc.result == 'success' && '- `gstreamer-release-windows-msvc-x64.zip` - Windows build using Visual Studio/MSVC' || '' }}
+          ${{ needs.build-macos.result == 'success' && '- `gstreamer-release-macos.tar.gz` - macOS build with Homebrew dependencies' || '' }}
+          
+          ## Quick Start
+          
+          ### Linux/macOS
+          ```bash
+          # Extract the tarball
+          tar -xzf gstreamer-release-*.tar.gz
+          
+          # Set environment variables
+          export GST_PLUGIN_PATH=$PWD/usr/lib/gstreamer-1.0
+          export LD_LIBRARY_PATH=$PWD/usr/lib  
+          export PATH=$PWD/usr/bin:$PATH
+          
+          # Test installation
+          gst-inspect-1.0 --version
+          ```
+          
+          ### Windows
+          ```powershell
+          # Extract the zip file and add bin directory to PATH
+          $env:PATH = "path\to\extracted\bin;$env:PATH"
+          
+          # Test installation
+          gst-inspect-1.0.exe --version
+          ```
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish summary
+      run: |
+        echo "=== Release Build Summary ==="
+        echo "Release Tag: ${{ github.event.release.tag_name }}"
+        echo "Release URL: ${{ github.event.release.html_url }}"
+        
+        # Count successful builds
+        SUCCESS_COUNT=0
+        ${{ needs.build-linux.result == 'success' && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        ${{ needs.build-windows-mingw.result == 'success' && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        ${{ needs.build-windows-msvc.result == 'success' && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        ${{ needs.build-macos.result == 'success' && 'SUCCESS_COUNT=$((SUCCESS_COUNT + 1))' || '' }}
+        
+        echo "Successful builds: $SUCCESS_COUNT/4 platforms"
+        
+        if [ $SUCCESS_COUNT -eq 0 ]; then
+          echo "⚠️ No builds succeeded - no artifacts uploaded"
+          exit 1
+        elif [ $SUCCESS_COUNT -eq 4 ]; then
+          echo "🎉 All platform builds succeeded!"
+        else
+          echo "✅ Partial success - some platform builds completed"
+        fi
