@@ -39,6 +39,9 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: write
+
 jobs:
   create-release:
     runs-on: ubuntu-22.04
@@ -156,14 +159,6 @@ jobs:
         echo "=== Release Files ==="
         ls -la release-files/
 
-    - name: Read release notes
-      id: read_notes
-      run: |
-        NOTES=$(cat release-notes.md)
-        echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-        echo "$NOTES" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
     - name: Create or Update GitHub Release
       id: create_release
       uses: actions/github-script@v7
@@ -176,14 +171,19 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const fs = require('fs');
-          const path = require('path');
           const tagName = process.env.TAG_NAME;
           const releaseName = process.env.RELEASE_NAME;
           const targetCommit = process.env.TARGET_COMMIT;
           const isPrerelease = process.env.IS_PRERELEASE === 'true';
           
           // Read release notes
-          const releaseNotes = fs.readFileSync('release-notes.md', 'utf8');
+          let releaseNotes = '';
+          if (fs.existsSync('release-notes.md')) {
+            releaseNotes = fs.readFileSync('release-notes.md', 'utf8');
+          } else {
+            core.warning('Release notes file not found');
+            releaseNotes = `Release ${tagName}`;
+          }
           
           // Check if release already exists
           let release;
@@ -201,7 +201,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: release.id,
-              body: release.body + '\n\n' + releaseNotes
+              body: release.body + '\n\n---\n\n' + releaseNotes
             });
             core.info('Updated existing release with new build information');
           } catch (error) {
@@ -227,7 +227,6 @@ jobs:
           
           core.setOutput('release_id', release.id);
           core.setOutput('release_url', release.html_url);
-          core.setOutput('upload_url', release.upload_url);
 
     - name: Upload Release Assets
       uses: actions/github-script@v7
@@ -239,21 +238,22 @@ jobs:
           const fs = require('fs');
           const path = require('path');
           const releaseId = process.env.RELEASE_ID;
+          const artifactsDir = 'release-files';
           
-          // Get all files in release-files directory
-          const releaseDir = 'release-files';
-          if (!fs.existsSync(releaseDir)) {
-            core.warning('No release-files directory found');
+          // Check if directory exists
+          if (!fs.existsSync(artifactsDir)) {
+            core.warning(`Artifacts directory not found: ${artifactsDir}`);
             return;
           }
           
-          const files = fs.readdirSync(releaseDir);
+          // Get all files in artifacts directory
+          const files = fs.readdirSync(artifactsDir);
           if (files.length === 0) {
-            core.warning('No files found in release-files directory');
+            core.warning(`No files found in ${artifactsDir}`);
             return;
           }
           
-          core.info(`Found ${files.length} files to upload`);
+          core.info(`Found ${files.length} file(s) to upload`);
           
           // Get existing assets to avoid duplicates
           const existingAssets = await github.rest.repos.listReleaseAssets({
@@ -263,14 +263,16 @@ jobs:
           });
           
           for (const file of files) {
-            const filePath = path.join(releaseDir, file);
+            const filePath = path.join(artifactsDir, file);
             const stats = fs.statSync(filePath);
             
             if (!stats.isFile()) {
+              core.info(`Skipping non-file: ${file}`);
               continue;
             }
             
-            core.info(`Processing: ${file} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+            const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2);
+            core.info(`Processing: ${file} (${fileSizeMB} MB)`);
             
             // Check if asset already exists
             const existingAsset = existingAssets.data.find(a => a.name === file);
