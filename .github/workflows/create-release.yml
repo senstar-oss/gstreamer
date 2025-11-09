@@ -3,6 +3,21 @@ name: Create GStreamer Release
 on:
   workflow_call:
     inputs:
+      tag_name:
+        description: 'Tag name for the release (optional - uses build number if not provided)'
+        required: false
+        default: ''
+        type: string
+      release_name:
+        description: 'Name for the release (optional - auto-generated if not provided)'
+        required: false
+        default: ''
+        type: string
+      target_commitish:
+        description: 'Commit SHA to tag (optional - uses current SHA if not provided)'
+        required: false
+        default: ''
+        type: string
       has_linux:
         description: 'Linux build succeeded'
         required: false
@@ -144,20 +159,25 @@ jobs:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: build-${{ github.run_number }}
-        name: GStreamer Build ${{ github.run_number }}
+        tag_name: ${{ inputs.tag_name != '' && inputs.tag_name || format('build-{0}', github.run_number) }}
+        name: ${{ inputs.release_name != '' && inputs.release_name || format('GStreamer Build {0}', github.run_number) }}
+        target_commitish: ${{ inputs.target_commitish != '' && inputs.target_commitish || github.sha }}
         body_path: release-notes.md
         files: release-files/*
         draft: false
-        prerelease: true
+        prerelease: ${{ inputs.tag_name == '' }}
+        fail_on_unmatched_files: false
+        append_body: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Release summary
+      env:
+        TAG_NAME: ${{ inputs.tag_name != '' && inputs.tag_name || format('build-{0}', github.run_number) }}
       run: |
         echo "=== Release Created Successfully ==="
-        echo "Tag: build-${{ github.run_number }}"
-        echo "Release URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/build-${{ github.run_number }}"
+        echo "Tag: ${TAG_NAME}"
+        echo "Release URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${TAG_NAME}"
         
         # Count successful builds
         SUCCESS_COUNT=0

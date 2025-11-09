@@ -3,6 +3,11 @@ name: Build GStreamer for Linux
 on:
   workflow_call:
     inputs:
+      target_ref:
+        description: 'Git ref (tag/branch) to checkout'
+        required: false
+        default: ''
+        type: string
       plugins:
         description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
         required: false
@@ -20,6 +25,11 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      target_ref:
+        description: 'Git ref (tag/branch) to checkout'
+        required: false
+        default: ''
+        type: string
       plugins:
         description: 'Comma-separated plugin sets (base,good,bad,ugly,libav)'
         required: false
@@ -53,6 +63,7 @@ jobs:
       with:
         submodules: recursive
         fetch-depth: 0
+        ref: ${{ inputs.target_ref != '' && inputs.target_ref || github.ref }}
 
     - name: Setup Python
       uses: actions/setup-python@v4
