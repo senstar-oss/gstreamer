@@ -38,44 +38,6 @@ on:
         required: false
         default: false
         type: boolean
-  
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Tag name for the release (e.g., test-release-1)'
-        required: false
-        default: 'test-release'
-        type: string
-      release_name:
-        description: 'Name for the release (e.g., Test Release 1)'
-        required: false
-        default: 'Test Release'
-        type: string
-      target_commitish:
-        description: 'Commit SHA to tag (leave empty for current)'
-        required: false
-        default: ''
-        type: string
-      has_linux:
-        description: 'Simulate Linux build succeeded'
-        required: false
-        default: true
-        type: boolean
-      has_windows_mingw:
-        description: 'Simulate Windows MinGW build succeeded' 
-        required: false
-        default: true
-        type: boolean
-      has_windows_msvc:
-        description: 'Simulate Windows MSVC build succeeded'
-        required: false
-        default: true
-        type: boolean
-      has_macos:
-        description: 'Simulate macOS build succeeded'
-        required: false
-        default: true
-        type: boolean
 
 permissions:
   contents: write
@@ -85,23 +47,7 @@ jobs:
     runs-on: ubuntu-22.04
     
     steps:
-    - name: Create test artifacts (manual dispatch only)
-      if: github.event_name == 'workflow_dispatch'
-      run: |
-        echo "Creating test artifacts for debugging..."
-        mkdir -p gstreamer-linux gstreamer-windows-mingw gstreamer-windows-msvc gstreamer-macos
-        
-        # Create small test files
-        ${{ inputs.has_linux && 'echo "Test Linux build" > gstreamer-linux/test-linux.txt && tar -czf gstreamer-test-linux.tar.gz -C gstreamer-linux .' || 'echo "Skipping Linux test artifact"' }}
-        ${{ inputs.has_windows_mingw && 'echo "Test MinGW build" > gstreamer-windows-mingw/test-mingw.txt && cd gstreamer-windows-mingw && zip -r ../gstreamer-test-windows-mingw-x64.zip . && cd ..' || 'echo "Skipping MinGW test artifact"' }}
-        ${{ inputs.has_windows_msvc && 'echo "Test MSVC build" > gstreamer-windows-msvc/test-msvc.txt && cd gstreamer-windows-msvc && zip -r ../gstreamer-test-windows-msvc-x64.zip . && cd ..' || 'echo "Skipping MSVC test artifact"' }}
-        ${{ inputs.has_macos && 'echo "Test macOS build" > gstreamer-macos/test-macos.txt && tar -czf gstreamer-test-macos.tar.gz -C gstreamer-macos .' || 'echo "Skipping macOS test artifact"' }}
-        
-        echo "Test artifacts created"
-        ls -la *.tar.gz *.zip 2>/dev/null || echo "No test artifacts created"
-    
     - name: Download all build artifacts
-      if: github.event_name == 'workflow_call'
       uses: actions/download-artifact@v4
 
     - name: List available artifacts
