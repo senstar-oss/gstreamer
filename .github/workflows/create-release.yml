@@ -156,28 +156,158 @@ jobs:
         echo "=== Release Files ==="
         ls -la release-files/
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ inputs.tag_name != '' && inputs.tag_name || format('build-{0}', github.run_number) }}
-        name: ${{ inputs.release_name != '' && inputs.release_name || format('GStreamer Build {0}', github.run_number) }}
-        target_commitish: ${{ inputs.target_commitish != '' && inputs.target_commitish || github.sha }}
-        body_path: release-notes.md
-        files: release-files/*
-        draft: false
-        prerelease: ${{ inputs.tag_name == '' }}
-        fail_on_unmatched_files: false
-        append_body: true
+    - name: Read release notes
+      id: read_notes
+      run: |
+        NOTES=$(cat release-notes.md)
+        echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+        echo "$NOTES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create or Update GitHub Release
+      id: create_release
+      uses: actions/github-script@v7
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG_NAME: ${{ inputs.tag_name != '' && inputs.tag_name || format('build-{0}', github.run_number) }}
+        RELEASE_NAME: ${{ inputs.release_name != '' && inputs.release_name || format('GStreamer Build {0}', github.run_number) }}
+        TARGET_COMMIT: ${{ inputs.target_commitish != '' && inputs.target_commitish || github.sha }}
+        IS_PRERELEASE: ${{ inputs.tag_name == '' }}
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const tagName = process.env.TAG_NAME;
+          const releaseName = process.env.RELEASE_NAME;
+          const targetCommit = process.env.TARGET_COMMIT;
+          const isPrerelease = process.env.IS_PRERELEASE === 'true';
+          
+          // Read release notes
+          const releaseNotes = fs.readFileSync('release-notes.md', 'utf8');
+          
+          // Check if release already exists
+          let release;
+          try {
+            const existingRelease = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: tagName
+            });
+            release = existingRelease.data;
+            core.info(`Release already exists: ${release.html_url}`);
+            
+            // Update existing release body (append)
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              body: release.body + '\n\n' + releaseNotes
+            });
+            core.info('Updated existing release with new build information');
+          } catch (error) {
+            if (error.status === 404) {
+              // Create new release
+              core.info(`Creating new release for tag: ${tagName}`);
+              const newRelease = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tagName,
+                name: releaseName,
+                body: releaseNotes,
+                draft: false,
+                prerelease: isPrerelease,
+                target_commitish: targetCommit
+              });
+              release = newRelease.data;
+              core.info(`Created release: ${release.html_url}`);
+            } else {
+              throw error;
+            }
+          }
+          
+          core.setOutput('release_id', release.id);
+          core.setOutput('release_url', release.html_url);
+          core.setOutput('upload_url', release.upload_url);
+
+    - name: Upload Release Assets
+      uses: actions/github-script@v7
+      env:
+        RELEASE_ID: ${{ steps.create_release.outputs.release_id }}
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const releaseId = process.env.RELEASE_ID;
+          
+          // Get all files in release-files directory
+          const releaseDir = 'release-files';
+          if (!fs.existsSync(releaseDir)) {
+            core.warning('No release-files directory found');
+            return;
+          }
+          
+          const files = fs.readdirSync(releaseDir);
+          if (files.length === 0) {
+            core.warning('No files found in release-files directory');
+            return;
+          }
+          
+          core.info(`Found ${files.length} files to upload`);
+          
+          // Get existing assets to avoid duplicates
+          const existingAssets = await github.rest.repos.listReleaseAssets({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: releaseId
+          });
+          
+          for (const file of files) {
+            const filePath = path.join(releaseDir, file);
+            const stats = fs.statSync(filePath);
+            
+            if (!stats.isFile()) {
+              continue;
+            }
+            
+            core.info(`Processing: ${file} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+            
+            // Check if asset already exists
+            const existingAsset = existingAssets.data.find(a => a.name === file);
+            if (existingAsset) {
+              core.info(`Asset ${file} already exists, deleting old version...`);
+              await github.rest.repos.deleteReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: existingAsset.id
+              });
+            }
+            
+            // Upload new asset
+            const fileContent = fs.readFileSync(filePath);
+            core.info(`Uploading ${file}...`);
+            
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              name: file,
+              data: fileContent
+            });
+            
+            core.info(`✅ Uploaded: ${file}`);
+          }
+          
+          core.info('All assets uploaded successfully!');
 
     - name: Release summary
       env:
         TAG_NAME: ${{ inputs.tag_name != '' && inputs.tag_name || format('build-{0}', github.run_number) }}
+        RELEASE_URL: ${{ steps.create_release.outputs.release_url }}
       run: |
         echo "=== Release Created Successfully ==="
         echo "Tag: ${TAG_NAME}"
-        echo "Release URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${TAG_NAME}"
+        echo "Release URL: ${RELEASE_URL}"
         
         # Count successful builds
         SUCCESS_COUNT=0
