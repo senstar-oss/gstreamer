@@ -301,28 +301,19 @@ environment (see below).
 
 ## Development environment target
 
-GStreamer ships a script that drops you into a development environment where
-all the plugins, libraries, and tools you just built are available:
+GStreamer uses [Meson devenv](https://mesonbuild.com/Commands.html#devenv)
+to drop you into a development environment where all the plugins, libraries,
+and tools you just built are available:
 
 ```
-./gst-env.py
+meson devenv -C <BUILDDIR>
 ```
-
-Or with a custom builddir (i.e., not `build`, `_build` or `builddir`):
-
-```
-./gst-env.py --builddir <BUILDDIR>
-```
-
-You can also use `ninja devenv` inside your build directory to achieve the same
-effect. However, this may not work on Windows if meson has auto-detected the
-visual studio environment.
 
 Alternatively, if you'd rather not start a shell in your workflow, you
 can mutate the current environment into a suitable state like so:
 
 ```
-./gst-env.py --only-environment
+meson devenv -C <BUILDDIR> --dump
 ```
 
 This will print output suitable for an sh-compatible `eval` function,
@@ -331,7 +322,7 @@ just like `ssh-agent -s`.
 An external script can be run in development environment with:
 
 ```
-./gst-env.py external_script.sh
+meson devenv -C <BUILDDIR> external_script.sh
 ```
 
 NOTE: In the development environment, a fully usable prefix is also configured
@@ -339,6 +330,65 @@ in `gstreamer/prefix` where you can install any extra dependency/project.
 
 For more extensive documentation about the development environment go to [the
 documentation](https://gstreamer.freedesktop.org/documentation/installing/building-from-source-using-meson.html).
+
+## Windows Development Environment
+
+### Prerequisites
+
+- **Visual Studio Community 2022** (or later) with:
+  - Desktop development with C++ workload
+  - Windows SDK
+- **Python 3.8+** (required for build system and gst-env.py)
+- **Meson 0.59.0+** (install via pip: `pip install meson`)
+
+It is recommended to use Visual Studio Community 2022 and PowerShell terminal.
+
+Meson 0.59.0+ automatically detects and activates the Visual Studio toolchain when no other compilers are found. GStreamer should be built in a PowerShell environment for a complete user experience.
+
+NOTE: If you have other toolchains (MinGW, Clang, etc.) in your PATH, Meson may detect those instead of Visual Studio. To ensure Visual Studio is used:
+- Remove conflicting toolchains from your Windows PATH, or
+- Use the `--vsenv` flag: `meson setup --vsenv builddir`, or
+- Run from a Developer PowerShell for VS 2022 which pre-configures the environment
+
+### Building with Visual Studio
+
+```powershell
+meson setup builddir
+meson compile -C builddir
+```
+
+NOTE: You should verify that Visual Studio is being detected. Look for output similar to:
+
+```powershell
+...
+Activating VS 17.x.x
+...
+```
+
+### Using the Development Environment in PowerShell
+
+```powershell
+python.exe gst-env.py
+```
+
+Or with a custom build directory:
+
+```powershell
+python.exe gst-env.py --builddir builddir
+```
+
+You can also use ninja directly:
+
+```powershell
+ninja -C builddir devenv
+```
+
+The development environment will configure all necessary paths (PATH, GST_PLUGIN_PATH, etc.) so you can immediately use GStreamer tools and test your changes:
+
+```powershell
+gst-inspect-1.0.exe coreelements
+gst-launch-1.0.exe videotestsrc ! autovideosink
+```
 
 ## Custom subprojects
 
@@ -543,14 +593,7 @@ the wrapper script can be buggy in some cases.
 
 #### cross-mingw development environment
 
-You can get into the development environment as usual with the gst-env.py
-script:
-
-```
-./gst-env.py
-```
-
-See [above](#development-environment) for more details.
+You can get into the development environment as described [above](#development-environment).
 
 After setting up [binfmt] to use wine for windows binaries,
 you can run GStreamer tools under wine by running:
@@ -560,3 +603,9 @@ gst-launch-1.0.exe videotestsrc ! glimagesink
 ```
 
 [binfmt]: http://man7.org/linux/man-pages/man5/binfmt.d.5.html
+
+#### vscode integration
+
+A file named `.vscode/launch.json.sample` can be used as a reference to debug and run
+GStreamer applications such as `gst-launch-1.0`. You just have to copy the file to
+`.vscode/launch.json` to enable the debugging session in Visual Studio Code.

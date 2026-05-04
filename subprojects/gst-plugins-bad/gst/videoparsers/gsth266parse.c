@@ -826,6 +826,11 @@ gst_h266_parse_process_nal (GstH266Parse * h266parse, GstH266NalUnit * nalu)
 
       if (ph->gdr_or_irap_pic_flag) {
         if (h266parse->mastering_display_info_state ==
+            GST_H266_PARSE_SEI_ACTIVE ||
+            h266parse->content_light_level_state == GST_H266_PARSE_SEI_ACTIVE)
+          h266parse->update_caps = TRUE;
+
+        if (h266parse->mastering_display_info_state ==
             GST_H266_PARSE_SEI_PARSED)
           h266parse->mastering_display_info_state = GST_H266_PARSE_SEI_ACTIVE;
         else if (h266parse->mastering_display_info_state ==
@@ -888,6 +893,11 @@ gst_h266_parse_process_nal (GstH266Parse * h266parse, GstH266NalUnit * nalu)
 
       /* if slice.picture_header_in_slice_header_flag == 0, PH will do this. */
       if (is_irap_or_gdr && slice.picture_header_in_slice_header_flag) {
+        if (h266parse->mastering_display_info_state ==
+            GST_H266_PARSE_SEI_ACTIVE ||
+            h266parse->content_light_level_state == GST_H266_PARSE_SEI_ACTIVE)
+          h266parse->update_caps = TRUE;
+
         if (h266parse->mastering_display_info_state ==
             GST_H266_PARSE_SEI_PARSED)
           h266parse->mastering_display_info_state = GST_H266_PARSE_SEI_ACTIVE;
@@ -2233,6 +2243,8 @@ gst_h266_parse_update_src_caps (GstH266Parse * h266parse, GstCaps * caps)
     GstH266VUIParams *vui = &sps->vui_params;
     gchar *colorimetry = NULL;
     guint interlaced_mode;
+    gint upstream_fps_n = 0;
+    gint upstream_fps_d = 1;
 
     GST_DEBUG_OBJECT (h266parse, "vps: %p", vps);
 
@@ -2265,7 +2277,15 @@ gst_h266_parse_update_src_caps (GstH266Parse * h266parse, GstCaps * caps)
       modified = TRUE;
     }
 
-    if (!h266parse->framerate_from_caps) {
+    if (s && gst_structure_get_fraction (s,
+            "framerate", &upstream_fps_n, &upstream_fps_d)) {
+      if (upstream_fps_n <= 0 || upstream_fps_d <= 0) {
+        upstream_fps_n = 0;
+        upstream_fps_d = 1;
+      }
+    }
+
+    if (!upstream_fps_n) {
       gint fps_num, fps_den;
 
       /* 0/1 is set as the default in the codec parser */
@@ -2348,26 +2368,16 @@ gst_h266_parse_update_src_caps (GstH266Parse * h266parse, GstCaps * caps)
 
       caps = gst_caps_copy (sink_caps);
 
-      /* sps should give this but upstream overrides */
-      if (s && gst_structure_has_field (s, "width"))
-        gst_structure_get_int (s, "width", &width);
-      else
-        width = h266parse->width;
-
-      if (s && gst_structure_has_field (s, "height"))
-        gst_structure_get_int (s, "height", &height);
-      else
-        height = h266parse->height;
+      width = h266parse->width;
+      height = h266parse->height;
 
       gst_caps_set_simple (caps, "width", G_TYPE_INT, width,
           "height", G_TYPE_INT, height, NULL);
 
-      h266parse->framerate_from_caps = FALSE;
       /* upstream overrides */
-      if (s && gst_structure_has_field (s, "framerate")) {
-        gst_structure_get_fraction (s, "framerate", &fps_num, &fps_den);
-        if (fps_den > 0)
-          h266parse->framerate_from_caps = TRUE;
+      if (upstream_fps_n > 0 && upstream_fps_d > 0) {
+        fps_num = upstream_fps_n;
+        fps_den = upstream_fps_d;
       }
 
       /* but not necessarily or reliably this */
@@ -2435,6 +2445,7 @@ gst_h266_parse_update_src_caps (GstH266Parse * h266parse, GstCaps * caps)
     const gchar *mdi_str = NULL;
     const gchar *cll_str = NULL;
     gboolean codec_data_modified = FALSE;
+    GstVideoHDRFormat hdr_format = GST_VIDEO_HDR_FORMAT_NONE;
     GstStructure *st;
 
     gst_caps_set_simple (caps, "parsed", G_TYPE_BOOLEAN, TRUE,
@@ -2551,6 +2562,19 @@ gst_h266_parse_update_src_caps (GstH266Parse * h266parse, GstCaps * caps)
       gst_caps_set_simple (caps, "lcevc", G_TYPE_BOOLEAN, TRUE, NULL);
     else
       gst_caps_set_simple (caps, "lcevc", G_TYPE_BOOLEAN, FALSE, NULL);
+
+    if (h266parse->user_data.has_hdr10_plus_data) {
+      hdr_format = GST_VIDEO_HDR_FORMAT_HDR10_PLUS;
+    } else if (gst_structure_has_field (st, "mastering-display-info") &&
+        gst_structure_has_field (st, "content-light-level")) {
+      hdr_format = GST_VIDEO_HDR_FORMAT_HDR10;
+    }
+
+    if (hdr_format != GST_VIDEO_HDR_FORMAT_NONE) {
+      gst_caps_set_simple (caps,
+          "hdr-format", G_TYPE_STRING,
+          gst_video_hdr_format_to_string (hdr_format), NULL);
+    }
 
     src_caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (h266parse));
 

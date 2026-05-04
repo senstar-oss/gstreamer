@@ -864,7 +864,7 @@ gst_gl_download_element_class_init (GstGLDownloadElementClass * klass)
       &gst_gl_download_element_sink_pad_template);
 
   gst_element_class_set_static_metadata (element_class,
-      "OpenGL downloader", "Filter/Video",
+      "OpenGL downloader", "Filter/Video/Downloader",
       "Downloads data from OpenGL", "Matthew Waters <matthew@centricular.com>");
 
   object_class->finalize = gst_gl_download_element_finalize;
@@ -1209,7 +1209,8 @@ _create_cached_dmabuf_info (GstGLContext * context, gpointer data)
 
       info = g_new0 (struct DmabufInfo, 1);
       info->dmabuf =
-          gst_dmabuf_allocator_alloc (download->dmabuf_allocator, fd, size);
+          gst_dmabuf_allocator_alloc_with_flags (download->dmabuf_allocator,
+          fd, size, GST_FD_MEMORY_FLAG_KEEP_MAPPED);
       info->stride = stride;
       info->offset = offset;
 

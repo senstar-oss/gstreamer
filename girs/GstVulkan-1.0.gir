@@ -1,13 +1,14 @@
 <!-- This file was automatically generated from C sources - DO NOT EDIT!
 To affect the contents of this file, edit the original C definitions,
 and/or use gtk-doc annotations.  -->
-<repository xmlns="http://www.gtk.org/introspection/core/1.0" xmlns:c="http://www.gtk.org/introspection/c/1.0" xmlns:glib="http://www.gtk.org/introspection/glib/1.0" version="1.2">
+<repository xmlns="http://www.gtk.org/introspection/core/1.0" xmlns:c="http://www.gtk.org/introspection/c/1.0" xmlns:doc="http://www.gtk.org/introspection/doc/1.0" xmlns:glib="http://www.gtk.org/introspection/glib/1.0" version="1.2">
   <include name="Gst" version="1.0"/>
   <include name="GstBase" version="1.0"/>
   <include name="GstVideo" version="1.0"/>
   <include name="Vulkan" version="1.0"/>
   <package name="gstreamer-vulkan-1.0"/>
   <c:include name="gst/vulkan/vulkan.h"/>
+  <doc:format name="unknown"/>
   <namespace name="GstVulkan" version="1.0" shared-library="libgstvulkan-1.0.so.0" c:identifier-prefixes="Gst" c:symbol-prefixes="gst">
     <alias name="VulkanHandleTypedef" c:type="GstVulkanHandleTypedef">
       <source-position filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkhandle.h"/>
@@ -5231,6 +5232,22 @@ called.</doc>
           </parameter>
         </parameters>
       </method>
+      <method name="get_features" c:identifier="gst_vulkan_physical_device_get_features" version="1.30">
+        <doc xml:space="preserve" filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.c">Retrieves features from a physical device, with entries relevant to the
+Vulkan version.</doc>
+        <source-position filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.h"/>
+        <return-value transfer-ownership="none" nullable="1">
+          <doc xml:space="preserve" filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.c">@device's set of features, NULL if it wasn't properly
+initialized or the minimum version required by GStreamer is not supported.</doc>
+          <type name="Vulkan.PhysicalDeviceFeatures2" c:type="const VkPhysicalDeviceFeatures2*"/>
+        </return-value>
+        <parameters>
+          <instance-parameter name="device" transfer-ownership="none">
+            <doc xml:space="preserve" filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.c">a #GstVulkanPhysicalDevice</doc>
+            <type name="VulkanPhysicalDevice" c:type="GstVulkanPhysicalDevice*"/>
+          </instance-parameter>
+        </parameters>
+      </method>
       <method name="get_handle" c:identifier="gst_vulkan_physical_device_get_handle" version="1.18" introspectable="0">
         <source-position filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.h"/>
         <return-value>
@@ -5288,6 +5305,22 @@ called.</doc>
             <doc xml:space="preserve" filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.c">return value for the layer implementation version</doc>
             <type name="guint32" c:type="guint32*"/>
           </parameter>
+        </parameters>
+      </method>
+      <method name="get_properties" c:identifier="gst_vulkan_physical_device_get_properties" version="1.30">
+        <doc xml:space="preserve" filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.c">Retrieves properties from a physical device, with entries relevant to the
+Vulkan version.</doc>
+        <source-position filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.h"/>
+        <return-value transfer-ownership="none" nullable="1">
+          <doc xml:space="preserve" filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.c">@device's set of properties, NULL if it wasn't properly
+initialized or the minimum version required by GStreamer is not supported.</doc>
+          <type name="Vulkan.PhysicalDeviceProperties2" c:type="const VkPhysicalDeviceProperties2*"/>
+        </return-value>
+        <parameters>
+          <instance-parameter name="device" transfer-ownership="none">
+            <doc xml:space="preserve" filename="../subprojects/gst-plugins-bad/gst-libs/gst/vulkan/gstvkphysicaldevice.c">a #GstVulkanPhysicalDevice</doc>
+            <type name="VulkanPhysicalDevice" c:type="GstVulkanPhysicalDevice*"/>
+          </instance-parameter>
         </parameters>
       </method>
       <property name="device-index" writable="1" construct-only="1" transfer-ownership="none" default-value="0">

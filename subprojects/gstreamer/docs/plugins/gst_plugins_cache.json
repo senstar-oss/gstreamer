@@ -92,6 +92,20 @@
                         "type": "gboolean",
                         "writable": true
                     },
+                    "rate": {
+                        "blurb": "Factor of buffer output speed",
+                        "conditionally-available": false,
+                        "construct": false,
+                        "construct-only": false,
+                        "controllable": false,
+                        "default": "1",
+                        "max": "1.79769e+308",
+                        "min": "0",
+                        "mutable": "ready",
+                        "readable": true,
+                        "type": "gdouble",
+                        "writable": true
+                    },
                     "sync": {
                         "blurb": "Synchronize to pipeline clock",
                         "conditionally-available": false,
@@ -131,7 +145,15 @@
                         "writable": true
                     }
                 },
-                "rank": "none"
+                "rank": "none",
+                "signals": {
+                    "resync": {
+                        "action": true,
+                        "args": [],
+                        "return-type": "void",
+                        "when": "last"
+                    }
+                }
             },
             "concat": {
                 "author": "Sebastian Dröge <sebastian@centricular.com>",
@@ -2944,7 +2966,63 @@
         "elements": {},
         "filename": "gstcoretracers",
         "license": "LGPL",
-        "other-types": {},
+        "other-types": {
+            "GstDotsTracerFeatures": {
+                "kind": "flags",
+                "values": [
+                    {
+                        "desc": "Disable pipeline-snapshot tracer composition",
+                        "name": "dump",
+                        "value": "0x00000001"
+                    },
+                    {
+                        "desc": "Enable pipeline-snapshot tracer composition",
+                        "name": "snapshot",
+                        "value": "0x00000002"
+                    }
+                ]
+            },
+            "GstLatencyTracerFlags": {
+                "kind": "flags",
+                "values": [
+                    {
+                        "desc": "Trace pipeline latency",
+                        "name": "pipeline",
+                        "value": "0x00000001"
+                    },
+                    {
+                        "desc": "Trace per-element latency",
+                        "name": "element",
+                        "value": "0x00000002"
+                    },
+                    {
+                        "desc": "Trace reported element latency",
+                        "name": "reported",
+                        "value": "0x00000004"
+                    }
+                ]
+            },
+            "GstLeaksStackTraceFlags": {
+                "kind": "flags",
+                "values": [
+                    {
+                        "desc": "Disabled",
+                        "name": "disabled",
+                        "value": "0xffffffff"
+                    },
+                    {
+                        "desc": "None",
+                        "name": "none",
+                        "value": "0x00000000"
+                    },
+                    {
+                        "desc": "Full",
+                        "name": "full",
+                        "value": "0x00000001"
+                    }
+                ]
+            }
+        },
         "package": "GStreamer",
         "source": "gstreamer",
         "tracers": {
@@ -2957,6 +3035,18 @@
                     "GObject"
                 ],
                 "properties": {
+                    "features": {
+                        "blurb": "Feature flags to control optional tracer features",
+                        "conditionally-available": false,
+                        "construct": false,
+                        "construct-only": true,
+                        "controllable": false,
+                        "default": "snapshot",
+                        "mutable": "null",
+                        "readable": true,
+                        "type": "GstDotsTracerFeatures",
+                        "writable": true
+                    },
                     "no-delete": {
                         "blurb": "Don't delete existing .dot files on startup",
                         "conditionally-available": false,

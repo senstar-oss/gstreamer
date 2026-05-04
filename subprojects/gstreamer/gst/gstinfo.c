@@ -121,6 +121,10 @@ static char *gst_info_printf_pointer_extension_func (const char *format,
 #  include <unistd.h>           /* getpid on UNIX */
 #endif
 
+#ifdef HAVE_STDINT_H
+#  include <stdint.h>           /* uintptr_t */
+#endif
+
 #if !defined(G_OS_WIN32) && !defined(HAVE_GETTID)
 #  ifdef __linux__
 #    include <sys/types.h>
@@ -272,6 +276,7 @@ GstDebugCategory *GST_CAT_EVENT = NULL;
 GstDebugCategory *GST_CAT_MESSAGE = NULL;
 GstDebugCategory *GST_CAT_PARAMS = NULL;
 GstDebugCategory *GST_CAT_CALL_TRACE = NULL;
+GstDebugCategory *GST_CAT_SEGMENT = NULL;
 GstDebugCategory *GST_CAT_SIGNAL = NULL;
 GstDebugCategory *GST_CAT_PROBE = NULL;
 GstDebugCategory *GST_CAT_REGISTRY = NULL;
@@ -365,6 +370,10 @@ struct _GstLogContextBuilder
 /* Global registry for cleanup */
 static GHashTable *_log_contexts_registry = NULL;
 static GMutex _log_contexts_registry_lock;
+
+/* Global registry for automatically created "once" contexts */
+static GHashTable *_once_log_contexts_registry = NULL;
+static GMutex _once_log_contexts_registry_lock;
 
 /* list of all name/level pairs from --gst-debug and GST_DEBUG */
 static GMutex __level_name_mutex;
@@ -522,6 +531,7 @@ _priv_gst_debug_init (void)
       GST_DEBUG_BOLD | GST_DEBUG_FG_BLACK | GST_DEBUG_BG_YELLOW, NULL);
   GST_CAT_CALL_TRACE = _gst_debug_category_new ("GST_CALL_TRACE",
       GST_DEBUG_BOLD, NULL);
+  GST_CAT_SEGMENT = _gst_debug_category_new ("GST_SEGMENT", 0, "segment");
   GST_CAT_SIGNAL = _gst_debug_category_new ("GST_SIGNAL",
       GST_DEBUG_BOLD | GST_DEBUG_FG_WHITE | GST_DEBUG_BG_RED, NULL);
   GST_CAT_PROBE = _gst_debug_category_new ("GST_PROBE",
@@ -781,7 +791,7 @@ gst_debug_log_full_valist (GstDebugCategory * category, GstLogContext * ctx,
 
   if (ctx) {
     va_list arguments;
-
+    g_return_if_fail (level < GST_LEVEL_MEMDUMP);
     G_VA_COPY (arguments, args);
     if (!_gst_log_ctx_check_id_valist (ctx, file, line, object, object_id,
             format, arguments)) {
@@ -891,6 +901,7 @@ gst_debug_log_literal_full (GstDebugCategory * category, GstLogContext * ctx,
     return;
 
   if (ctx) {
+    g_return_if_fail (level < GST_LEVEL_MEMDUMP);
     if (!_gst_log_ctx_check_id_literal (ctx, file, line, object, id,
             message_string))
       return;
@@ -1695,7 +1706,7 @@ _get_thread_id (void)
 #elif defined(__linux__)
   return syscall (SYS_gettid);
 #else
-  return pthread_self ();
+  return (gpointer) (uintptr_t) pthread_self ();
 #endif
 }
 
@@ -2790,6 +2801,32 @@ _register_log_context (GstLogContext * ctx)
   g_mutex_unlock (&_log_contexts_registry_lock);
 }
 
+static GstLogContext *
+_fetch_or_register_once_log_context (GstDebugCategory * category)
+{
+  GstLogContext *ctx;
+
+  g_mutex_lock (&_once_log_contexts_registry_lock);
+
+  if (!_once_log_contexts_registry) {
+    _once_log_contexts_registry =
+        g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, NULL);
+  }
+
+  if (!(ctx = g_hash_table_lookup (_once_log_contexts_registry, category))) {
+    GstLogContextBuilder *builder =
+        gst_log_context_builder_new (category, GST_LOG_CONTEXT_FLAG_THROTTLE);
+    builder = gst_log_context_builder_set_hash_flags (builder,
+        GST_LOG_CONTEXT_USE_LINE_NUMBER);
+    ctx = gst_log_context_builder_build (builder);
+    g_hash_table_insert (_once_log_contexts_registry, ctx->category, ctx);
+  }
+
+  g_mutex_unlock (&_once_log_contexts_registry_lock);
+
+  return ctx;
+}
+
 /**
  * gst_log_context_builder_new: (skip):
  * @category: the debug category to use
@@ -2997,6 +3034,8 @@ gst_log_context_free (GstLogContext * ctx)
  * Logs a message with the specified context. If the context has already seen this
  * message based on its flags configuration, the message will not be logged.
  *
+ * @level >= %GST_LEVEL_MEMDUMP is not supported.
+ *
  * Since: 1.28
  */
 void
@@ -3030,6 +3069,8 @@ gst_debug_log_with_context (GstLogContext * ctx,
  * already seen this message based on its flags configuration, the message will
  * not be logged.
  *
+ * @level >= %GST_LEVEL_MEMDUMP is not supported.
+ *
  * Since: 1.28
  */
 void
@@ -3057,6 +3098,8 @@ gst_debug_log_with_context_valist (GstLogContext * ctx,
  * Logs a literal message with the specified context. Depending on the context
  * state, the message may not be logged at all.
  *
+ * @level >= %GST_LEVEL_MEMDUMP is not supported.
+ *
  * Since: 1.28
  */
 void
@@ -3083,6 +3126,8 @@ gst_debug_log_literal_with_context (GstLogContext * ctx,
  * Logs a message with the specified context and ID. If the context has already
  * seen this message based on its flags configuration, the message will not be
  * logged.
+ *
+ * @level >= %GST_LEVEL_MEMDUMP is not supported.
  *
  * Since: 1.28
  */
@@ -3115,6 +3160,8 @@ gst_debug_log_id_with_context (GstLogContext * ctx,
  * seen this message based on its flags configuration, the message will not be
  * logged.
  *
+ * @level >= %GST_LEVEL_MEMDUMP is not supported.
+ *
  * Since: 1.28
  */
 void
@@ -3142,6 +3189,8 @@ gst_debug_log_id_with_context_valist (GstLogContext * ctx,
  * seen this message based on its flags configuration, the message will not be
  * logged.
  *
+ * @level >= %GST_LEVEL_MEMDUMP is not supported.
+ *
  * Since: 1.28
  */
 void
@@ -3154,16 +3203,58 @@ gst_debug_log_id_literal_with_context (GstLogContext * ctx,
       NULL, id, message);
 }
 
+void
+_gst_debug_log_once (GstDebugCategory * category,
+    GstDebugLevel level,
+    const gchar * file,
+    const gchar * function,
+    gint line, GObject * object, const gchar * format, ...)
+{
+  va_list args;
+  GstLogContext *ctx = _fetch_or_register_once_log_context (category);
+
+  va_start (args, format);
+  gst_debug_log_full_valist (ctx->category, ctx, level, file, function, line,
+      object, NULL, format, args);
+  va_end (args);
+}
+
+void
+_gst_debug_log_once_id (GstDebugCategory * category,
+    GstDebugLevel level,
+    const gchar * file,
+    const gchar * function,
+    gint line, const gchar * id, const gchar * format, ...)
+{
+  va_list args;
+  GstLogContext *ctx = _fetch_or_register_once_log_context (category);
+  va_start (args, format);
+  gst_debug_log_full_valist (ctx->category, ctx, level, file, function, line,
+      NULL, id, format, args);
+  va_end (args);
+}
+
 static void
 _gst_log_context_cleanup (void)
 {
+  /*
+   * We need to lock both context registries for cleanup because they share
+   * values and unreffing the first will unref values from the second.
+   */
   g_mutex_lock (&_log_contexts_registry_lock);
+  g_mutex_lock (&_once_log_contexts_registry_lock);
 
   if (_log_contexts_registry) {
     g_hash_table_unref (_log_contexts_registry);
     _log_contexts_registry = NULL;
   }
 
+  if (_once_log_contexts_registry) {
+    g_hash_table_unref (_once_log_contexts_registry);
+    _once_log_contexts_registry = NULL;
+  }
+
+  g_mutex_unlock (&_once_log_contexts_registry_lock);
   g_mutex_unlock (&_log_contexts_registry_lock);
 }
 

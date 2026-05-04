@@ -746,9 +746,19 @@ ges_project_try_updating_id (GESProject * project, GESAsset * asset,
   }
 
   /* Always send the MISSING_URI signal if requesting new ID is possible
-   * so that subclasses of GESProject are aware of the missing-uri */
-  g_signal_emit (project, _signals[MISSING_URI_SIGNAL], 0, error, asset,
-      &new_id);
+   * so that subclasses of GESProject are aware of the missing-uri.
+   * Save the proposed id beforehand since g_signal_emit overwrites the
+   * return value pointer without freeing the old value. */
+  {
+    gchar *proposed_id = new_id;
+    new_id = NULL;
+    g_signal_emit (project, _signals[MISSING_URI_SIGNAL], 0, error, asset,
+        &new_id);
+    if (!new_id)
+      new_id = proposed_id;
+    else
+      g_free (proposed_id);
+  }
 
   if (new_id) {
     GST_DEBUG_OBJECT (project, "new id found: %s", new_id);
@@ -825,10 +835,7 @@ ges_project_set_loaded (GESProject * project, GESFormatter * formatter,
         error);
   }
 
-  if (!ges_timeline_in_current_thread (formatter->timeline)) {
-    GST_INFO_OBJECT (project, "Loaded in a different thread, "
-        "not committing timeline");
-  } else if (GST_STATE (formatter->timeline) < GST_STATE_PAUSED) {
+  if (GST_STATE (formatter->timeline) < GST_STATE_PAUSED) {
     timeline_fill_gaps (formatter->timeline);
   } else {
     ges_timeline_commit (formatter->timeline);
@@ -1400,6 +1407,8 @@ ges_project_add_encoding_profile (GESProject * project,
  *
  * Returns: (transfer none) (element-type GstPbutils.EncodingProfile) (allow-none): The
  * list of #GstEncodingProfile used in @project
+ *
+ * Deprecated: 1.30: Use ges_project_list_encoding_profiles_full() instead for MT-safety.
  */
 const GList *
 ges_project_list_encoding_profiles (GESProject * project)
@@ -1407,6 +1416,37 @@ ges_project_list_encoding_profiles (GESProject * project)
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
   return project->priv->encoding_profiles;
+}
+
+/**
+ * ges_project_list_encoding_profiles_full:
+ * @project: A #GESProject
+ *
+ * Lists the encoding profiles that have been set to @project. The first one
+ * is the latest added. Each profile in the returned list has its reference
+ * count incremented.
+ *
+ * Returns: (transfer full) (element-type GstPbutils.EncodingProfile) (nullable): A
+ * newly-allocated list of #GstEncodingProfile used in @project, with references
+ * added to each profile. Free the list with g_list_free_full() using
+ * gst_object_unref() as the free function.
+ *
+ * Since: 1.30
+ */
+GList *
+ges_project_list_encoding_profiles_full (GESProject * project)
+{
+  GList *tmp, *res = NULL;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), NULL);
+
+  GES_PROJECT_LOCK (project);
+  for (tmp = project->priv->encoding_profiles; tmp; tmp = tmp->next) {
+    res = g_list_prepend (res, gst_object_ref (tmp->data));
+  }
+  GES_PROJECT_UNLOCK (project);
+
+  return g_list_reverse (res);
 }
 
 /**

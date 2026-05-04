@@ -333,6 +333,12 @@ gst_vulkan_vp9_decoder_decide_allocation (GstVideoDecoder * decoder,
   VkImageUsageFlags usage;
   GstVulkanVideoCapabilities vk_caps;
 
+  if (self->dpb_size == 0) {
+    return
+        GST_VIDEO_DECODER_CLASS (parent_class)->decide_allocation (decoder,
+        query);
+  }
+
   gst_query_parse_allocation (query, &caps, NULL);
   if (!caps)
     return FALSE;
@@ -1182,7 +1188,7 @@ gst_vulkan_vp9_decoder_register (GstPlugin * plugin, GstVulkanDevice * device,
 
   gst_vulkan_create_feature_name (device, "GstVulkanVp9Decoder",
       "GstVulkanVp9Device%dDecoder", &type_name, "vulkanvp9dec",
-      "vulkanVp9device%ddec", &feature_name, &cdata->description, &rank);
+      "vulkanvp9device%ddec", &feature_name, &cdata->description, &rank);
 
   type_info.class_data = cdata;
 

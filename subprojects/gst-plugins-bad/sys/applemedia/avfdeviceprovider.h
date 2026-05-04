@@ -28,6 +28,7 @@
 #endif
 
 #include <gst/gst.h>
+#include <gst/gstdeviceprovider.h>
 #include "avfvideosrc.h"
 
 G_BEGIN_DECLS
@@ -51,6 +52,7 @@ struct _GstAVFDeviceProvider {
 typedef enum {
   GST_AVF_DEVICE_TYPE_INVALID = 0,
   GST_AVF_DEVICE_TYPE_VIDEO_SOURCE,
+  GST_AVF_DEVICE_TYPE_SCREEN_SOURCE,
 } GstAvfDeviceType;
 
 struct _GstAVFDeviceProviderClass {
@@ -58,6 +60,7 @@ struct _GstAVFDeviceProviderClass {
 };
 
 GType gst_avf_device_provider_get_type (void);
+GST_DEVICE_PROVIDER_REGISTER_DECLARE (avfdeviceprovider);
 
 
 typedef struct _GstAvfDevice GstAvfDevice;
@@ -76,7 +79,7 @@ struct _GstAvfDevice {
   GstDevice         parent;
 
   GstAvfDeviceType  type;
-  int               device_index;
+  gchar            *unique_id;
   const gchar      *element;
 };
 

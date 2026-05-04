@@ -151,6 +151,7 @@ static const FormatInfo formats[] = {
   {"audio/x-private1-lpcm", "DVD LPCM", FLAG_AUDIO, ""},
   {"audio/x-m4a", "MPEG-4 AAC", FLAG_CONTAINER, "m4a"},
   {"audio/x-mod", "Module Music Format (MOD)", FLAG_AUDIO, "mod"},
+  {"audio/x-mpeg-h", "MPEG-H 3D Audio", FLAG_AUDIO, ""},
   {"audio/x-mulaw", "Mu-Law", FLAG_AUDIO, ""},
   {"audio/x-musepack", "Musepack (MPC)", FLAG_AUDIO, "mpc"},
   {"audio/x-ffmpeg-parsed-musepack", "Musepack (MPC)", FLAG_AUDIO, "mpc"},
@@ -339,6 +340,7 @@ static const FormatInfo formats[] = {
   /* metadata */
   {"application/x-onvif-metadata", "ONVIF Timed Metadata", FLAG_METADATA, ""},
   {"meta/x-klv", "KLV Metadata", FLAG_METADATA, ""},
+  {"meta/x-st-2038", "ST-2038 Ancillary Data", FLAG_METADATA, ""},
   {"meta/x-id3", N_("Timed ID3 tag Metadata"), FLAG_METADATA, ""},
 };
 

@@ -283,6 +283,9 @@ struct _GstRTSPSrc {
   gboolean          onvif_rate_control;
   gboolean          is_live;
   gboolean          ignore_x_server_reply;
+  GstRTSPBackchannelHttpMethod backchannel_http_method;
+  gboolean          backchannel_fallback_armed;
+  gboolean          backchannel_fallen_back;
   GstStructure     *prop_extra_http_request_headers;
   gboolean          tcp_timestamp;
   gboolean          force_non_compliant_url;
@@ -347,6 +350,7 @@ struct _GstRTSPSrcClass {
   gboolean (*set_parameter) (GstRTSPSrc *rtsp, const gchar *name, const gchar *value, const gchar *content_type, GstPromise *promise);
   gboolean (*set_mikey_parameter) (GstRTSPSrc *rtsp, guint id, GstCaps *mikey, GstPromise *promise);
   gboolean (*remove_key) (GstRTSPSrc *rtsp, guint id);
+  gboolean (*invalidate_key) (GstRTSPSrc *rtsp, guint id);
   GstFlowReturn (*push_backchannel_buffer) (GstRTSPSrc *src, guint id, GstSample *sample);
   GstFlowReturn (*push_backchannel_sample) (GstRTSPSrc *src, guint id, GstSample *sample);
 };

@@ -1343,8 +1343,9 @@ load_egl_module (gpointer user_data)
 #else
   /* On Linux the .so is only in -dev packages, try with a real soname
    * Proper compilers will optimize away the strcmp */
-  if (g_strcmp0 (G_MODULE_SUFFIX, "so") == 0)
-    module_egl = g_module_open ("libEGL.so.1", G_MODULE_BIND_LAZY);
+#ifdef __linux__
+  module_egl = g_module_open ("libEGL.so.1", G_MODULE_BIND_LAZY);
+#endif
 
   /* This automatically handles the suffix and even .la files */
   if (!module_egl)
@@ -1837,8 +1838,6 @@ gst_gl_context_egl_get_format_modifiers (GstGLContext * context, gint fourcc,
     goto beach;
 
   format = &g_array_index (egl->dma_formats, GstGLDmaFormat, index);
-  if (!format)
-    goto beach;
 
   *modifiers = format->modifiers;
   ret = TRUE;
@@ -1922,13 +1921,24 @@ gst_gl_context_egl_append_all_drm_formats (GstGLContext * context,
   if (!egl->dma_formats)
     goto beach;
 
-  for (gint i = 0; i < egl->dma_formats->len; i++) {
+  for (guint i = 0; i < egl->dma_formats->len; i++) {
     GstGLDmaFormat *format;
+    GstGLDmaModifier *mods, linear_modifier = { 0, FALSE };
+    guint len;
+
     format = &g_array_index (egl->dma_formats, GstGLDmaFormat, i);
 
-    for (gint j = 0; j < format->modifiers->len; j++) {
+    if (format->modifiers) {
+      mods = (GstGLDmaModifier *) format->modifiers->data;
+      len = format->modifiers->len;
+    } else {
+      mods = &linear_modifier;
+      len = 1;
+    }
+
+    for (guint j = 0; j < len; j++) {
       GstGLDmaModifier *modifier;
-      modifier = &g_array_index (format->modifiers, GstGLDmaModifier, j);
+      modifier = &mods[j];
 
       if (modifier->external_only && !include_external)
         continue;

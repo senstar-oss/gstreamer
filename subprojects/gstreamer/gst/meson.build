@@ -72,6 +72,7 @@ gst_sources = files(
   'gstvalue.c',
   'gstvecdeque.c',
   'gstparse.c',
+  'gstcpuid.c',
 )
 
 gst_headers = files(
@@ -152,8 +153,9 @@ gst_headers = files(
   'gstregistry.h',
   'gstparse.h',
   'math-compat.h',
+  'gstcpuid.h',
 )
-if host_system == 'darwin'
+if host_system == 'darwin' and subsystem == 'macos'
   gst_headers += files('gstmacos.h')
   gst_sources += files('gstmacos.m')
 endif
@@ -172,7 +174,7 @@ if host_system == 'android'
   extra_deps += cc.find_library('log')
 endif
 
-if host_system == 'darwin'
+if host_system == 'darwin' and subsystem == 'macos'
   extra_deps += dependency('appleframeworks', modules : ['Cocoa'])
 endif
 

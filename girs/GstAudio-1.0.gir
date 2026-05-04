@@ -1,7 +1,7 @@
 <!-- This file was automatically generated from C sources - DO NOT EDIT!
 To affect the contents of this file, edit the original C definitions,
 and/or use gtk-doc annotations.  -->
-<repository xmlns="http://www.gtk.org/introspection/core/1.0" xmlns:c="http://www.gtk.org/introspection/c/1.0" xmlns:glib="http://www.gtk.org/introspection/glib/1.0" version="1.2">
+<repository xmlns="http://www.gtk.org/introspection/core/1.0" xmlns:c="http://www.gtk.org/introspection/c/1.0" xmlns:doc="http://www.gtk.org/introspection/doc/1.0" xmlns:glib="http://www.gtk.org/introspection/glib/1.0" version="1.2">
   <include name="GLib" version="2.0"/>
   <include name="GModule" version="2.0"/>
   <include name="GObject" version="2.0"/>
@@ -9,6 +9,7 @@ and/or use gtk-doc annotations.  -->
   <include name="GstBase" version="1.0"/>
   <package name="gstreamer-audio-1.0"/>
   <c:include name="gst/audio/audio.h"/>
+  <doc:format name="unknown"/>
   <namespace name="GstAudio" version="1.0" shared-library="libgstaudio-1.0.so.0" c:identifier-prefixes="Gst" c:symbol-prefixes="gst">
     <function-macro name="AUDIO_AGGREGATOR" c:identifier="GST_AUDIO_AGGREGATOR" introspectable="0">
       <source-position filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/gstaudioaggregator.h"/>
@@ -697,7 +698,7 @@ return to upstream/caller (indicating either GST_FLOW_ERROR or GST_FLOW_OK).</do
         </parameter>
       </parameters>
     </function-macro>
-    <constant name="AUDIO_FORMATS_ALL" value="{ F64BE, F64LE, F32BE, F32LE, S32BE, S32LE, U32BE, U32LE, S24_32BE, S24_32LE, U24_32BE, U24_32LE, S24BE, S24LE, U24BE, U24LE, S20BE, S20LE, U20BE, U20LE, S20_32BE, S20_32LE, U20_32BE, U20_32LE, S18BE, S18LE, U18BE, U18LE, S16BE, S16LE, U16BE, U16LE, S8, U8 }" c:type="GST_AUDIO_FORMATS_ALL">
+    <constant name="AUDIO_FORMATS_ALL" value="{ F64BE, F64LE, F32BE, F32LE, S32BE, S32LE, U32BE, U32LE, S24_32BE, S24_32LE, U24_32BE, U24_32LE, S24BE, S24LE, U24BE, U24LE, S20_32BE, S20_32LE, U20_32BE, U20_32LE, S20BE, S20LE, U20BE, U20LE, S18BE, S18LE, U18BE, U18LE, S16BE, S16LE, U16BE, U16LE, S8, U8 }" c:type="GST_AUDIO_FORMATS_ALL">
       <doc xml:space="preserve" filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/audio-format.h">List of all audio formats, for use in template caps strings.
 
 Formats are sorted by decreasing "quality", using these criteria by priority:
@@ -6797,7 +6798,7 @@ versions were printing a critical warning and returned %NULL.</doc>
 #GstAudioFormatUnpack and #GstAudioFormatPack functions</doc>
       </member>
     </bitfield>
-    <record name="AudioFormatInfo" c:type="GstAudioFormatInfo">
+    <record name="AudioFormatInfo" c:type="GstAudioFormatInfo" glib:type-name="GstAudioFormatInfo" glib:get-type="gst_audio_format_info_get_type" c:symbol-prefix="audio_format_info">
       <doc xml:space="preserve" filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/audio-format.h">Information for an audio format.</doc>
       <source-position filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/audio-format.h"/>
       <field name="format" writable="1">
@@ -11405,12 +11406,6 @@ string is not a known format.</doc>
         </parameter>
       </parameters>
     </function>
-    <function name="audio_format_info_get_type" c:identifier="gst_audio_format_info_get_type">
-      <source-position filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/audio-format.h"/>
-      <return-value transfer-ownership="none">
-        <type name="GType" c:type="GType"/>
-      </return-value>
-    </function>
     <function name="audio_format_to_string" c:identifier="gst_audio_format_to_string" moved-to="AudioFormat.to_string">
       <doc xml:space="preserve" filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/audio-format.c">Returns a string containing a descriptive name for the #GstAudioFormat.
 
@@ -11851,7 +11846,7 @@ for @quality in @options.</doc>
         </parameter>
       </parameters>
     </function>
-    <function name="buffer_add_audio_downmix_meta" c:identifier="gst_buffer_add_audio_downmix_meta">
+    <function name="buffer_add_audio_downmix_meta" c:identifier="gst_buffer_add_audio_downmix_meta" introspectable="0">
       <doc xml:space="preserve" filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/gstaudiometa.c">Attaches #GstAudioDownmixMeta metadata to @buffer with the given parameters.
 
 @matrix is an two-dimensional array of @to_channels times @from_channels
@@ -11893,7 +11888,7 @@ of the results.</doc>
         <parameter name="matrix" transfer-ownership="none">
           <doc xml:space="preserve" filename="../subprojects/gst-plugins-base/gst-libs/gst/audio/gstaudiometa.c">The matrix coefficients.</doc>
           <array zero-terminated="0" c:type="const gfloat**">
-            <type name="gfloat"/>
+            <type name="gpointer"/>
           </array>
         </parameter>
       </parameters>

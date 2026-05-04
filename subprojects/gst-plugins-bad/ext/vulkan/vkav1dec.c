@@ -290,8 +290,11 @@ gst_vulkan_av1_decoder_negotiate (GstVideoDecoder * decoder)
   GstVideoFormat format;
 
   /* Ignore downstream renegotiation request. */
-  if (!self->need_negotiation)
-    return TRUE;
+  if (!self->need_negotiation) {
+    GST_DEBUG_OBJECT (decoder,
+        "Input state hasn't changed, no need to reconfigure downstream caps");
+    goto bail;
+  }
 
   if (!gst_vulkan_decoder_out_format (self->decoder, &format_prop))
     return FALSE;
@@ -314,6 +317,7 @@ gst_vulkan_av1_decoder_negotiate (GstVideoDecoder * decoder)
   GST_INFO_OBJECT (self, "Negotiated caps %" GST_PTR_FORMAT,
       self->output_state->caps);
 
+bail:
   return GST_VIDEO_DECODER_CLASS (parent_class)->negotiate (decoder);
 }
 
@@ -329,6 +333,12 @@ gst_vulkan_av1_decoder_decide_allocation (GstVideoDecoder * decoder,
   gboolean update_pool;
   VkImageUsageFlags usage;
   GstVulkanVideoCapabilities vk_caps;
+
+  if (self->dpb_size == 0) {
+    return
+        GST_VIDEO_DECODER_CLASS (parent_class)->decide_allocation (decoder,
+        query);
+  }
 
   gst_query_parse_allocation (query, &caps, NULL);
   if (!caps)
@@ -796,11 +806,6 @@ _fill_ref_slot (GstVulkanAV1Decoder * self, GstAV1Picture * picture,
   guint8 ref_frame_sign_bias = 0;
   guint8 i;
 
-  for (i = 0; i < STD_VIDEO_AV1_NUM_REF_FRAMES; i++) {
-    ref_frame_sign_bias |= (fh->ref_frame_sign_bias[i] <= 0) << i;
-    stdav1_ref->SavedOrderHints[i] = fh->order_hints[i];
-  }
-
   /* *INDENT-OFF* */
   *stdav1_ref = (StdVideoDecodeAV1ReferenceInfo) {
     .flags = (StdVideoDecodeAV1ReferenceInfoFlags) {
@@ -808,9 +813,14 @@ _fill_ref_slot (GstVulkanAV1Decoder * self, GstAV1Picture * picture,
       .segmentation_enabled = fh->segmentation_params.segmentation_enabled,
     },
     .frame_type = (StdVideoAV1FrameType)fh->frame_type,
-    .RefFrameSignBias = ref_frame_sign_bias,
     .OrderHint = fh->order_hint,
   };
+
+  for (i = 0; i < STD_VIDEO_AV1_NUM_REF_FRAMES; i++) {
+    ref_frame_sign_bias |= (fh->ref_frame_sign_bias[i] <= 0) << i;
+    stdav1_ref->SavedOrderHints[i] = fh->order_hints[i];
+  }
+  stdav1_ref->RefFrameSignBias = ref_frame_sign_bias;
 
   *vkav1_slot = (VkVideoDecodeAV1DpbSlotInfoKHR) {
     .sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_DPB_SLOT_INFO_KHR,

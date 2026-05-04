@@ -60,6 +60,7 @@ validate_flow_checksum_type_get_type (void)
       {CHECKSUM_TYPE_NONE, "NONE", "none"},
       {CHECKSUM_TYPE_AS_ID, "AS-ID", "as-id"},
       {CHECKSUM_TYPE_CONTENT_HEX, "raw-hex", "raw-hex"},
+      {CHECKSUM_TYPE_CONTENT_TEXT, "raw-text", "raw-text"},
       {G_CHECKSUM_MD5, "MD5", "md5"},
       {G_CHECKSUM_SHA1, "SHA-1", "sha1"},
       {G_CHECKSUM_SHA256, "SHA-256", "sha256"},
@@ -89,6 +90,7 @@ struct _ValidateFlowOverride
   gchar **logged_event_types;
   gchar **logged_upstream_event_types;
   gchar **ignored_event_types;
+  gchar **logged_unregistered_sei_uuids;
 
   gchar *expectations_file_path;
   gchar *actual_results_file_path;
@@ -100,7 +102,12 @@ struct _ValidateFlowOverride
    * or to the actual results file otherwise. */
   gchar *output_file_path;
   FILE *output_file;
-  GMutex output_file_mutex;
+  GMutex flow_mutex;
+
+  /* Live comparison state, protected by flow_mutex */
+  gchar **expected_lines;
+  gsize expected_line_index;
+  gboolean live_mismatch_found;
 
 };
 
@@ -108,6 +115,7 @@ GList *all_overrides = NULL;
 
 static void validate_flow_override_finalize (GObject * object);
 static void validate_flow_override_attached (GstValidateOverride * override);
+
 static void _runner_set (GObject * object, GParamSpec * pspec,
     gpointer user_data);
 static void runner_stopping (GstValidateRunner * runner,
@@ -147,6 +155,55 @@ validate_flow_override_class_init (ValidateFlowOverrideClass * klass)
           GST_VALIDATE_REPORT_LEVEL_CRITICAL));
 }
 
+#define DIFF_CONTEXT_LINES 3
+
+static void
+report_mismatch_diff (ValidateFlowOverride * flow, gsize line_index,
+    const gchar * expected, const gchar * actual)
+{
+  gboolean colored = gst_validate_has_colored_output ();
+  const gchar *red = colored ? "\033[31m" : "";
+  const gchar *green = colored ? "\033[32m" : "";
+  const gchar *reset = colored ? "\033[0m" : "";
+  GString *diff = g_string_new (NULL);
+  gsize ctx_start, ctx_end, i;
+
+  g_string_append_printf (diff, "--- %s\n+++ %s\n",
+      flow->expectations_file_path, flow->actual_results_file_path);
+
+  ctx_start = line_index > DIFF_CONTEXT_LINES ?
+      line_index - DIFF_CONTEXT_LINES : 0;
+  ctx_end = line_index + DIFF_CONTEXT_LINES;
+
+  g_string_append_printf (diff, "@@ -%" G_GSIZE_FORMAT ",%" G_GSIZE_FORMAT
+      " +%" G_GSIZE_FORMAT ",%" G_GSIZE_FORMAT " @@\n",
+      ctx_start + 1, ctx_end - ctx_start + 1,
+      ctx_start + 1, ctx_end - ctx_start + 1);
+
+  /* Context before */
+  for (i = ctx_start; i < line_index; i++) {
+    if (flow->expected_lines[i] == NULL)
+      break;
+    g_string_append_printf (diff, " %s\n", flow->expected_lines[i]);
+  }
+
+  g_string_append_printf (diff, "%s-%s%s\n%s+%s%s\n",
+      red, expected, reset, green, actual, reset);
+
+  /* Context after */
+  for (i = line_index + 1; i <= ctx_end; i++) {
+    if (flow->expected_lines[i] == NULL)
+      break;
+    g_string_append_printf (diff, " %s\n", flow->expected_lines[i]);
+  }
+
+  GST_VALIDATE_REPORT (flow, VALIDATE_FLOW_MISMATCH,
+      "Mismatch in pad %s, line %" G_GSIZE_FORMAT ":\n%s%s%s",
+      flow->pad_name, line_index + 1,
+      !colored ? "``` diff\n" : "", diff->str, !colored ? "```\n" : "");
+  g_string_free (diff, TRUE);
+}
+
 /* *INDENT-OFF* */
 G_GNUC_PRINTF (2, 0)
 /* *INDENT-ON* */
@@ -155,13 +212,48 @@ static void
 validate_flow_override_vprintf (ValidateFlowOverride * flow, const char *format,
     va_list ap)
 {
-  g_mutex_lock (&flow->output_file_mutex);
+  va_list ap_copy;
+  gchar *formatted = NULL;
+
+  va_copy (ap_copy, ap);
+
+  g_mutex_lock (&flow->flow_mutex);
   if (!flow->error_writing_file && vfprintf (flow->output_file, format, ap) < 0) {
     GST_ERROR_OBJECT (flow, "Writing to file %s failed",
         flow->output_file_path);
     flow->error_writing_file = TRUE;
   }
-  g_mutex_unlock (&flow->output_file_mutex);
+
+  if (flow->expected_lines) {
+    gchar **lines;
+    gsize i;
+
+    formatted = g_strdup_vprintf (format, ap_copy);
+    lines = g_strsplit (formatted, "\n", 0);
+
+    for (i = 0; lines[i] != NULL && lines[i + 1] != NULL; i++) {
+      const gchar *expected = flow->expected_lines[flow->expected_line_index];
+
+      if (expected == NULL) {
+        flow->live_mismatch_found = TRUE;
+        report_mismatch_diff (flow, flow->expected_line_index, "<nothing>",
+            lines[i]);
+      } else {
+        if (g_strcmp0 (lines[i], expected) != 0) {
+          flow->live_mismatch_found = TRUE;
+          report_mismatch_diff (flow, flow->expected_line_index, expected,
+              lines[i]);
+        }
+        flow->expected_line_index++;
+      }
+    }
+
+    g_strfreev (lines);
+    g_free (formatted);
+  }
+  g_mutex_unlock (&flow->flow_mutex);
+
+  va_end (ap_copy);
 }
 
 /* *INDENT-OFF* */
@@ -213,7 +305,8 @@ validate_flow_override_buffer_handler (GstValidateOverride * override,
     return;
 
   buffer_str = validate_flow_format_buffer (buffer, flow->checksum_type,
-      flow->logged_fields, flow->ignored_fields);
+      flow->logged_fields, flow->ignored_fields,
+      flow->logged_unregistered_sei_uuids);
   validate_flow_override_printf (flow, "buffer: %s\n", buffer_str);
   g_free (buffer_str);
 }
@@ -300,6 +393,8 @@ validate_flow_override_new (GstStructure * config)
       gst_validate_utils_get_strv (config, "logged-upstream-event-types");
   flow->ignored_event_types =
       gst_validate_utils_get_strv (config, "ignored-event-types");
+  flow->logged_unregistered_sei_uuids =
+      gst_validate_utils_get_strv (config, "logged-unregistered-sei-uuids");
 
   tmpval = gst_structure_get_value (config, "ignored-fields");
   if (tmpval) {
@@ -342,18 +437,66 @@ validate_flow_override_new (GstStructure * config)
 
   /* expectations-dir: Path to the directory where the expectations will be
    * written if they don't exist, relative to the current working directory.
-   * By default the current working directory is used. */
+   * By default, derived from the test file path (__filename__) if available,
+   * otherwise the current working directory is used. */
   flow->expectations_dir =
       g_strdup (gst_structure_get_string (config, "expectations-dir"));
-  if (!flow->expectations_dir)
-    flow->expectations_dir = g_strdup (".");
 
   /* actual-results-dir: Path to the directory where the events will be
-   * recorded. The expectation file will be compared to this. */
+   * recorded. The expectation file will be compared to this. By default,
+   * derived from the test file path (__filename__) if available, otherwise
+   * the current working directory is used. */
   flow->actual_results_dir =
       g_strdup (gst_structure_get_string (config, "actual-results-dir"));
-  if (!flow->actual_results_dir)
-    flow->actual_results_dir = g_strdup (".");
+
+  /* Auto-derive directories from __filename__ when not explicitly set */
+  if (!flow->expectations_dir || !flow->actual_results_dir) {
+    const gchar *filename = gst_structure_get_string (config, "__filename__");
+
+    if (filename) {
+      gchar *config_dir = g_path_get_dirname (filename);
+      gchar *config_fname = g_path_get_basename (filename);
+      gchar *config_name = g_strdup (config_fname);
+      gchar *dot;
+
+      /* Strip .validatetest extension */
+      dot = strrchr (config_name, '.');
+      if (dot && dot > config_name)
+        *dot = '\0';
+
+      if (!flow->expectations_dir)
+        flow->expectations_dir =
+            g_build_path ("/", config_dir, config_name, "flow-expectations",
+            NULL);
+
+      if (!flow->actual_results_dir) {
+        const gchar *logsdir = g_getenv ("GST_VALIDATE_LOGSDIR");
+        gchar *config_name_dir, *t;
+
+        if (!logsdir)
+          logsdir = g_get_tmp_dir ();
+
+        config_name_dir = g_strdup (config_name);
+        for (t = config_name_dir; *t != '\0'; t++) {
+          if (*t == '.')
+            *t = '/';
+        }
+
+        flow->actual_results_dir =
+            g_build_path ("/", logsdir, config_name_dir, NULL);
+        g_free (config_name_dir);
+      }
+
+      g_free (config_dir);
+      g_free (config_fname);
+      g_free (config_name);
+    } else {
+      if (!flow->expectations_dir)
+        flow->expectations_dir = g_strdup (".");
+      if (!flow->actual_results_dir)
+        flow->actual_results_dir = g_strdup (".");
+    }
+  }
 
   {
     gchar *pad_name_safe = make_safe_file_name (flow->pad_name);
@@ -407,10 +550,23 @@ validate_flow_setup_files (ValidateFlowOverride * flow, gint default_generate)
   }
 
   if (exists && local_generate_expectations != 1 && default_generate != 1) {
+    gchar *contents;
+    GError *error = NULL;
+
     flow->mode = VALIDATE_FLOW_MODE_WRITING_ACTUAL_RESULTS;
     flow->output_file_path = g_strdup (flow->actual_results_file_path);
     gst_validate_printf (NULL, "**-> Checking expectations file: '%s'**\n",
         flow->expectations_file_path);
+
+    g_file_get_contents (flow->expectations_file_path, &contents, NULL, &error);
+    if (error) {
+      gst_validate_abort ("Failed to open expectations file: %s Reason: %s",
+          flow->expectations_file_path, error->message);
+    }
+    flow->expected_lines = g_strsplit (contents, "\n", 0);
+    g_free (contents);
+    flow->expected_line_index = 0;
+    flow->live_mismatch_found = FALSE;
   } else {
     flow->mode = VALIDATE_FLOW_MODE_WRITING_EXPECTATIONS;
     flow->output_file_path = g_strdup (flow->expectations_file_path);
@@ -451,6 +607,7 @@ validate_flow_override_attached (GstValidateOverride * override)
   ValidateFlowOverride *flow = VALIDATE_FLOW_OVERRIDE (override);
   flow->was_attached = TRUE;
 }
+
 
 static void
 run_diff (const gchar * expected_file, const gchar * actual_file)
@@ -496,11 +653,12 @@ run_diff (const gchar * expected_file, const gchar * actual_file)
         g_clear_error (&error);
       }
       g_clear_object (&process2);
-      g_free (fname);
     }
 
-    fprintf (stderr, "%s%s%s\n",
-        !colored ? "``` diff\n" : "", stdout_text, !colored ? "\n```" : "");
+    fprintf (stderr, "%s $ diff -u -- %s %s\n%s%s\n",
+        !colored ? "``` diff\n" : "",
+        expected_file, actual_file, stdout_text, !colored ? "\n```" : "");
+    g_free (fname);
   } else {
     fprintf (stderr, "Cannot show more details, failed to run diff: %s",
         error->message);
@@ -529,30 +687,14 @@ _line_to_show (gchar ** lines, gsize i)
 }
 
 static void
-show_mismatch_error (ValidateFlowOverride * flow, gchar ** lines_expected,
-    gchar ** lines_actual, gsize line_index)
-{
-  const gchar *line_expected = _line_to_show (lines_expected, line_index);
-  const gchar *line_actual = _line_to_show (lines_actual, line_index);
-
-  run_diff (flow->expectations_file_path, flow->actual_results_file_path);
-  GST_VALIDATE_REPORT (flow, VALIDATE_FLOW_MISMATCH,
-      "Mismatch error in pad %s, line %" G_GSIZE_FORMAT
-      ". Expected:\n%s\nActual:\n%s\n", flow->pad_name, line_index + 1,
-      line_expected, line_actual);
-
-}
-
-static void
 runner_stopping (GstValidateRunner * runner, ValidateFlowOverride * flow)
 {
-  gchar **lines_expected, **lines_actual;
-  gsize i = 0;
-
+  g_mutex_lock (&flow->flow_mutex);
   fclose (flow->output_file);
   flow->output_file = NULL;
 
   if (!flow->was_attached) {
+    g_mutex_unlock (&flow->flow_mutex);
     GST_VALIDATE_REPORT (flow, VALIDATE_FLOW_NOT_ATTACHED,
         "The test ended without the pad ever being attached: %s",
         flow->pad_name);
@@ -560,58 +702,34 @@ runner_stopping (GstValidateRunner * runner, ValidateFlowOverride * flow)
   }
 
   if (flow->mode == VALIDATE_FLOW_MODE_WRITING_EXPECTATIONS) {
+    g_mutex_unlock (&flow->flow_mutex);
     gst_validate_skip_test ("wrote expectation files for %s.\n",
         flow->pad_name);
 
     return;
   }
 
-  {
-    gchar *contents;
-    GError *error = NULL;
-    g_file_get_contents (flow->expectations_file_path, &contents, NULL, &error);
-    if (error) {
-      gst_validate_abort ("Failed to open expectations file: %s Reason: %s",
-          flow->expectations_file_path, error->message);
-    }
-    lines_expected = g_strsplit (contents, "\n", 0);
-    g_free (contents);
-  }
+  if (flow->expected_lines
+      && flow->expected_lines[flow->expected_line_index] != NULL) {
+    const gchar *remaining =
+        _line_to_show (flow->expected_lines, flow->expected_line_index);
 
-  {
-    gchar *contents;
-    GError *error = NULL;
-    g_file_get_contents (flow->actual_results_file_path, &contents, NULL,
-        &error);
-    if (error) {
-      gst_validate_abort ("Failed to open actual results file: %s Reason: %s",
-          flow->actual_results_file_path, error->message);
-    }
-    lines_actual = g_strsplit (contents, "\n", 0);
-    g_free (contents);
-  }
-
-  gst_validate_printf (flow, "Checking that flow %s matches expected flow %s\n",
-      flow->expectations_file_path, flow->actual_results_file_path);
-
-  for (i = 0; lines_expected[i] && lines_actual[i]; i++) {
-    if (g_strcmp0 (lines_expected[i], lines_actual[i])) {
-      show_mismatch_error (flow, lines_expected, lines_actual, i);
-      goto stop;
+    if (remaining && g_strcmp0 (remaining, "<nothing>") != 0) {
+      flow->live_mismatch_found = TRUE;
+      report_mismatch_diff (flow, flow->expected_line_index, remaining,
+          "<nothing>");
     }
   }
-  gst_validate_printf (flow, "OK\n");
-  if (!lines_expected[i] && lines_actual[i]) {
-    show_mismatch_error (flow, lines_expected, lines_actual, i);
-    goto stop;
-  } else if (lines_expected[i] && !lines_actual[i]) {
-    show_mismatch_error (flow, lines_expected, lines_actual, i);
-    goto stop;
-  }
+  g_mutex_unlock (&flow->flow_mutex);
 
-stop:
-  g_strfreev (lines_expected);
-  g_strfreev (lines_actual);
+  if (flow->live_mismatch_found) {
+    run_diff (flow->expectations_file_path, flow->actual_results_file_path);
+  } else {
+    gst_validate_printf (flow,
+        "Checking that flow %s matches expected flow %s\n",
+        flow->expectations_file_path, flow->actual_results_file_path);
+    gst_validate_printf (flow, "OK\n");
+  }
 }
 
 static void
@@ -631,8 +749,10 @@ validate_flow_override_finalize (GObject * object)
   g_strfreev (flow->logged_event_types);
   g_strfreev (flow->logged_upstream_event_types);
   g_strfreev (flow->ignored_event_types);
+  g_strfreev (flow->logged_unregistered_sei_uuids);
   if (flow->ignored_fields)
     gst_structure_free (flow->ignored_fields);
+  g_strfreev (flow->expected_lines);
 
   G_OBJECT_CLASS (validate_flow_override_parent_class)->finalize (object);
 }

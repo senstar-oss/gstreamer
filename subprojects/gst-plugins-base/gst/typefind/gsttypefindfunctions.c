@@ -1900,6 +1900,80 @@ ac3_type_find (GstTypeFind * tf, gpointer unused)
   }
 }
 
+/*** audio/x-ac4 ***/
+static GstStaticCaps ac4_caps = GST_STATIC_CAPS ("audio/x-ac4");
+
+#define AC4_CAPS (gst_static_caps_get(&ac4_caps))
+#define AC4_MAX_PROBE_LENGTH 1024       /* 1KB should be enough for AC4 audio streams */
+
+static void
+ac4_type_find (GstTypeFind * tf, gpointer unused)
+{
+  DataScanCtx c = { 0, NULL, 0 };
+
+  while (c.offset < AC4_MAX_PROBE_LENGTH) {
+    if (G_UNLIKELY (!data_scan_ctx_ensure_data (tf, &c, 4)))
+      break;
+
+    if (c.data[0] == 0xAC && (c.data[1] == 0x40 || c.data[1] == 0x41)) {
+      GST_LOG ("Possible AC4 frame sync at offset %"
+          G_GUINT64_FORMAT, c.offset);
+
+      guint16 framesize_parser = (c.data[2] << 8) | c.data[3];
+      guint32 frame_size = 0;
+      guint32 total_frame_size = 0;
+      guint8 has_crc = (c.data[1] == 0x41) ? 1 : 0;
+      DataScanCtx c_next = c;
+      guint header_size = 0;
+
+      if (framesize_parser != 0xFFFF) { /* frame_size is 16 bits */
+
+        frame_size = framesize_parser;
+        header_size = 4;        /* sync_word (2) + frame_size (2) */
+      } else {                  /* frame_size is 24 bits (additional 3 bytes) */
+        if (!data_scan_ctx_ensure_data (tf, &c_next, 7))        /* sync_word(2) + frame_size_marker(2) + frame_size(3) */
+          break;
+
+        frame_size =
+            (c_next.data[4] << 16) | (c_next.data[5] << 8) | c_next.data[6];
+        header_size = 7;        /* sync_word (2) + frame_size marker (2) + frame_size (3) */
+      }
+
+      /* Total frame size = header + raw_ac4_frame + optional crc_word. frame_size includes
+         raw_ac4_frame only, not the header or CRC */
+      total_frame_size = header_size + frame_size + (has_crc ? 2 : 0);
+
+      if (G_UNLIKELY (!data_scan_ctx_ensure_data (tf, &c_next,
+                  total_frame_size)))
+        break;
+
+      data_scan_ctx_advance (tf, &c_next, total_frame_size);
+
+      if (G_UNLIKELY (!data_scan_ctx_ensure_data (tf, &c_next, 2)))
+        break;
+
+      if (c_next.data[0] == 0xAC && (c_next.data[1] == 0x40
+              || c_next.data[1] == 0x41)) {
+        GstTypeFindProbability prob;
+        GST_LOG ("Second AC4 frame sync at offset %"
+            G_GUINT64_FORMAT, c_next.offset);
+
+        if (c.offset == 0)
+          prob = GST_TYPE_FIND_MAXIMUM;
+        else
+          prob = GST_TYPE_FIND_POSSIBLE;
+
+        gst_type_find_suggest (tf, prob, AC4_CAPS);
+        return;
+
+      } else {
+        GST_LOG ("No second AC4 frame found, false sync");
+      }
+    }
+    data_scan_ctx_advance (tf, &c, 1);
+  }
+}
+
 /*** audio/x-dts ***/
 static GstStaticCaps dts_caps = GST_STATIC_CAPS ("audio/x-dts");
 #define DTS_CAPS (gst_static_caps_get (&dts_caps))
@@ -5474,6 +5548,7 @@ sbc_check_header (const guint8 * data, gsize len, guint * rate,
   else if (ch_mode == 3)
     return 4 + (n_subbands * 2) / 2 + (n_subbands + n_blocks * bitpool) / 8;
 
+  g_assert_not_reached ();
   return 0;
 }
 
@@ -6584,7 +6659,7 @@ y4m_typefind (GstTypeFind * tf, gpointer private)
 
   data = gst_type_find_peek (tf, 0, 10);
   if (data != NULL && memcmp (data, "YUV4MPEG2 ", 10) == 0) {
-    gst_type_find_suggest_simple (tf, GST_TYPE_FIND_LIKELY,
+    gst_type_find_suggest_simple (tf, GST_TYPE_FIND_MAXIMUM,
         "application/x-yuv4mpeg", "y4mversion", G_TYPE_INT, 2, NULL);
   }
 }
@@ -6795,18 +6870,18 @@ av1_is_valid_obu_type (guint obu_type)
 }
 
 static gboolean
-av1_leb128 (const guint8 * data, guint32 * retval, gint * read_bytes)
+av1_leb128 (GstByteReader * br, guint32 * retval)
 {
   guint8 leb128_byte = 0;
   guint64 value = 0;
   gint i;
 
   *retval = 0;
-  *read_bytes = 0;
 
   for (i = 0; i < 8; i++) {
-    leb128_byte = data[i];
-    value |= (((gint) leb128_byte & 0x7f) << (i * 7));
+    if (!gst_byte_reader_get_uint8 (br, &leb128_byte))
+      return FALSE;
+    value |= (((guint64) leb128_byte & 0x7f) << (i * 7));
     if (!(leb128_byte & 0x80))
       break;
 
@@ -6814,13 +6889,9 @@ av1_leb128 (const guint8 * data, guint32 * retval, gint * read_bytes)
       return FALSE;
   }
 
-  if (i == 8)
-    return FALSE;
-
   /* check for bitstream conformance see chapter 4.10.5 */
-  if (value < G_MAXUINT32) {
+  if (value <= G_MAXUINT32) {
     *retval = (guint32) value;
-    *read_bytes = i + 1;
     return TRUE;
   }
 
@@ -6828,44 +6899,44 @@ av1_leb128 (const guint8 * data, guint32 * retval, gint * read_bytes)
 }
 
 static gboolean
-av1_is_valid_obu (const guint8 * data, guint * obu_type, gint * read_bytes)
+av1_is_valid_obu (GstByteReader * br, guint * obu_type)
 {
   gboolean obu_forbidden_bit;
   gboolean obu_extension_flag;
   gboolean obu_has_size_field;
   gboolean obu_reserved_1bit;
-  int offset = 1;
+  guint8 b;
 
   *obu_type = 0;
-  *read_bytes = 0;
+
+  if (!gst_byte_reader_get_uint8 (br, &b))
+    return FALSE;
 
   /* Detect OBU header */
-  obu_forbidden_bit = !!(data[0] & 0x80);
+  obu_forbidden_bit = !!(b & 0x80);
   if (obu_forbidden_bit)
     return FALSE;
 
-  *obu_type = (data[0] & 0x78) >> 3;
-  obu_extension_flag = !!(data[0] & 0x4);
-  obu_has_size_field = !!(data[0] & 0x2);
-  obu_reserved_1bit = !!(data[0] & 0x1);
+  *obu_type = (b & 0x78) >> 3;
+  obu_extension_flag = !!(b & 0x4);
+  obu_has_size_field = !!(b & 0x2);
+  obu_reserved_1bit = !!(b & 0x1);
 
   /* if obu_extension_flag is set temporal_id (3 bits)
    * spatial_id (2 bits) and extension_header_reserved_3bits (3 bits)
    * field are coded in the header so OBU size field is
    * 1 byte after */
-  if (obu_extension_flag)
-    offset++;
-
-  *read_bytes += offset;
+  if (obu_extension_flag) {
+    if (!gst_byte_reader_skip (br, 1))
+      return FALSE;
+  }
 
   if (av1_is_valid_obu_type (*obu_type) && !obu_reserved_1bit) {
     if (obu_has_size_field) {
       guint32 obu_size;
-      gint bytes;
 
-      if (!av1_leb128 (data + offset, &obu_size, &bytes))
+      if (!av1_leb128 (br, &obu_size))
         return FALSE;
-      *read_bytes += bytes;
     }
 
     return TRUE;
@@ -6881,42 +6952,39 @@ av1_type_find (GstTypeFind * tf, gpointer unused)
   guint32 frame_unit_size;
   guint32 obu_length;
   const guint8 *data;
+  GstByteReader br;
   guint obu_type;
-  gint read_bytes;
-  gint offset = 0;
 
   data = gst_type_find_peek (tf, 0, 25);
   if (!data)
     return;
 
-  if (av1_is_valid_obu (data, &obu_type, &read_bytes)) {
+  gst_byte_reader_init (&br, data, 25);
+
+  if (av1_is_valid_obu (&br, &obu_type)) {
     gst_type_find_suggest_simple (tf, GST_TYPE_FIND_MINIMUM, "video/x-av1",
         "stream-format", G_TYPE_STRING, "obu-stream",
         "alignment", G_TYPE_STRING, "none", NULL);
     return;
   }
 
-  if (!av1_leb128 (data, &temporal_unit_size, &read_bytes))
+  if (!av1_leb128 (&br, &temporal_unit_size))
     return;
-  offset += read_bytes;
 
-  if (!av1_leb128 (data + offset, &frame_unit_size, &read_bytes))
+  if (!av1_leb128 (&br, &frame_unit_size))
     return;
-  offset += read_bytes;
 
   if (frame_unit_size > temporal_unit_size)
     return;
 
-  if (!av1_leb128 (data + offset, &obu_length, &read_bytes))
+  if (!av1_leb128 (&br, &obu_length))
     return;
-  offset += read_bytes;
 
   if (obu_length > frame_unit_size)
     return;
 
-  if (!av1_is_valid_obu (data + offset, &obu_type, &read_bytes))
+  if (!av1_is_valid_obu (&br, &obu_type))
     return;
-  offset += read_bytes;
 
   /* The first OBU must be a temporal delimiter */
   if (obu_type == 2)
@@ -6962,6 +7030,8 @@ GST_TYPE_FIND_REGISTER_DEFINE (mp3, "audio/mpeg", GST_RANK_PRIMARY,
     mp3_type_find, "mp3,mp2,mp1,mpga", MP3_CAPS, NULL, NULL);
 GST_TYPE_FIND_REGISTER_DEFINE (ac3, "audio/x-ac3", GST_RANK_PRIMARY,
     ac3_type_find, "ac3,eac3", AC3_CAPS, NULL, NULL);
+GST_TYPE_FIND_REGISTER_DEFINE (ac4, "audio/x-ac4", GST_RANK_PRIMARY,
+    ac4_type_find, "ac4", AC4_CAPS, NULL, NULL);
 GST_TYPE_FIND_REGISTER_DEFINE (dts, "audio/x-dts", GST_RANK_SECONDARY,
     dts_type_find, "dts", DTS_CAPS, NULL, NULL);
 GST_TYPE_FIND_REGISTER_DEFINE (gsm, "audio/x-gsm", GST_RANK_PRIMARY, NULL,
@@ -7130,7 +7200,7 @@ GST_TYPE_FIND_REGISTER_DEFINE (vivo, "video/vivo", GST_RANK_SECONDARY,
 GST_TYPE_FIND_REGISTER_DEFINE (wbmp, "image/vnd.wap.wbmp", GST_RANK_MARGINAL,
     wbmp_typefind, NULL, NULL, NULL, NULL);
 GST_TYPE_FIND_REGISTER_DEFINE (y4m, "application/x-yuv4mpeg",
-    GST_RANK_SECONDARY, y4m_typefind, NULL, NULL, NULL, NULL);
+    GST_RANK_PRIMARY, y4m_typefind, "y4m", NULL, NULL, NULL);
 GST_TYPE_FIND_REGISTER_DEFINE (windows_icon, "image/x-icon", GST_RANK_MARGINAL,
     windows_icon_typefind, NULL, NULL, NULL, NULL);
 #ifdef USE_GIO

@@ -1668,7 +1668,15 @@ _update_ice_gathering_state_task (GstWebRTCBin * webrtc, gpointer data)
   if (new_state == GST_WEBRTC_ICE_GATHERING_STATE_COMPLETE) {
     ICE_LOCK (webrtc);
     if (webrtc->priv->pending_local_ice_candidates->len != 0) {
-      /* ICE candidates queued for emissiong -> we're gathering, not complete */
+      /* ICE candidates queued for emission -> we're gathering, not complete */
+
+      const gchar *new_s =
+          _enum_value_to_string (GST_TYPE_WEBRTC_ICE_GATHERING_STATE,
+          GST_WEBRTC_ICE_GATHERING_STATE_GATHERING);
+      GST_INFO_OBJECT (webrtc,
+          "Deferring ICE gathering state change to %s(%u) due to pending candidates",
+          new_s, GST_WEBRTC_ICE_GATHERING_STATE_GATHERING);
+
       new_state = GST_WEBRTC_ICE_GATHERING_STATE_GATHERING;
     }
     ICE_UNLOCK (webrtc);
@@ -2856,6 +2864,7 @@ _get_or_create_data_channel_transports (GstWebRTCBin * webrtc, guint session_id)
 
     if (!(sctp_transport = webrtc->priv->sctp_transport)) {
       sctp_transport = webrtc_sctp_transport_new ();
+      gst_object_ref_sink (sctp_transport);
       sctp_transport->transport =
           g_object_ref (webrtc->priv->data_channel_transport->transport);
       sctp_transport->webrtcbin = webrtc;
@@ -4706,12 +4715,23 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options,
       guint answer_caps_size = gst_caps_get_size (answer_caps);
       for (guint l = 0; l < answer_caps_size; l++) {
         const GstStructure *s = gst_caps_get_structure (answer_caps, l);
-        const gchar *enc_name = gst_structure_get_string (s, "encoding-name");
-        gchar *tmp = g_ascii_strdown (enc_name, -1);
+        const gchar *enc_name = NULL;
+        gchar *tmp = NULL;
         gint target_pt = -1;
         gint original_target_pt = -1;
         guint target_ssrc = 0;
 
+        enc_name = gst_structure_get_string (s, "encoding-name");
+
+        /* The SDP might have been munged and we have no guarantee that
+         * gst_sdp_media_get_caps_from_media() adds an encoding-name field to all caps. */
+        if (!enc_name) {
+          GST_WARNING_OBJECT (webrtc,
+              "encoding-name missing in %" GST_PTR_FORMAT, s);
+          continue;
+        }
+
+        tmp = g_ascii_strdown (enc_name, -1);
         if (g_strv_contains (disallowed_payloads, tmp)) {
           g_free (tmp);
           continue;
@@ -7208,7 +7228,7 @@ gst_webrtc_bin_add_ice_candidate (GstWebRTCBin * webrtc, guint mline,
 }
 
 static GstStructure *
-_on_local_ice_candidate_task (GstWebRTCBin * webrtc)
+_on_local_ice_candidate_task (GstWebRTCBin * webrtc, gpointer data)
 {
   gsize i;
   GArray *items;
@@ -7277,7 +7297,9 @@ _on_local_ice_candidate_task (GstWebRTCBin * webrtc)
   }
   g_array_free (items, TRUE);
 
-  return NULL;
+  /* Clearing all pending ice candidates may have allowed the gathering
+   * state to transition to complete - so check it before exiting */
+  return _update_ice_gathering_state_task (webrtc, data);
 }
 
 static void
@@ -8803,7 +8825,9 @@ gst_webrtc_bin_close (GstWebRTCBin * webrtc, GstPromise * promise)
     GstWebRTCDTLSTransport *transport;
 
     transport = webrtc_transceiver_get_dtls_transport (rtp_trans);
-    transport->state = GST_WEBRTC_DTLS_TRANSPORT_STATE_CLOSED;
+    if (transport) {
+      transport->state = GST_WEBRTC_DTLS_TRANSPORT_STATE_CLOSED;
+    }
   }
 
   GST_OBJECT_UNLOCK (webrtc);
@@ -8819,6 +8843,7 @@ gst_webrtc_bin_close (GstWebRTCBin * webrtc, GstPromise * promise)
       gst_promise_new_with_change_func (on_ice_closed, d,
       (GDestroyNotify) close_data_unref);
   gst_webrtc_ice_close (webrtc->priv->ice, close_promise);
+  gst_promise_unref (close_promise);
 }
 
 static void
@@ -9465,6 +9490,15 @@ gst_webrtc_bin_class_init (GstWebRTCBinClass * klass)
    *  "local-id"            G_TYPE_STRING               identifier for the associated RTCInboundRTPSTreamStats
    *  "remote-timestamp"    G_TYPE_DOUBLE               remote timestamp the statistics were sent by the remote
    *
+   * RTCTransportStats supported fields (https://www.w3.org/TR/webrtc-stats/#transportstats-dict*)
+   *
+   * "selected-candidate-pair-id" G_TYPE_STRING         identifier for the associated RTCIceCandidatePairStats
+   * "dtls-role"            GST_TYPE_WEBRTC_DTLS_ROLE   "client" or "server" depending on the DTLS role. "unknown" before the DTLS negotiation starts. (Since: 1.28)
+   * "dtls-state"           GST_TYPE_WEBRTC_DTLS_TRANSPORT_STATE current value of the state attribute of the underlying RTCDtlsTransport (Since: 1.28)
+   * "tls-version"          G_TYPE_STRING               for components where DTLS is negotiated, the TLS version agreed. Only exists after DTLS negotiation is complete (Since: 1.30)
+   * "dtls-cipher"          G_TYPE_STRING               descriptive name of the cipher suite used for the DTLS transport (Since: 1.30)
+   * "srtp-cipher"          G_TYPE_STRING               descriptive name of the protection profile used for the SRTP transport (Since: 1.30)
+   *
    * RTCPeerConnectionStats supported fields (https://w3c.github.io/webrtc-stats/#pcstats-dict*) (Since: 1.24)
    *
    *  "data-channels-opened"  G_TYPE_UINT               number of unique data channels that have entered the 'open' state
@@ -9490,6 +9524,11 @@ gst_webrtc_bin_class_init (GstWebRTCBinClass * klass)
    *
    *  "local-candidate-id"  G_TYPE_STRING               unique identifier that is associated to the object that was inspected to produce the RTCIceCandidateStats for the local candidate associated with this candidate pair.
    *  "remote-candidate-id" G_TYPE_STRING               unique identifier that is associated to the object that was inspected to produce the RTCIceCandidateStats for the remote candidate associated with this candidate pair.
+   *
+   * RTCCertificateStats supported fields (https://www.w3.org/TR/webrtc-stats/#certificatestats-dict*) (Since: 1.30)
+   *  "fingerprint"           G_TYPE_STRING             The fingerprint of the certificate. Only use the fingerprint value as defined in Section 5 of [RFC4572].
+   *  "fingerprint-algorithm" G_TYPE_STRING             The hash function used to compute the certificate fingerprint.
+   *  "base64-certificate"    G_TYPE_STRING             The DER-encoded base-64 representation of the certificate.
    */
   gst_webrtc_bin_signals[GET_STATS_SIGNAL] =
       g_signal_new_class_handler ("get-stats",

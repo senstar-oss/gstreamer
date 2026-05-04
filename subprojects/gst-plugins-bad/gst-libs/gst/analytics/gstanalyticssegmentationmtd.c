@@ -26,6 +26,9 @@
 #include "gstanalyticssegmentationmtd.h"
 #include <gst/video/video-info.h>
 
+GST_DEBUG_CATEGORY_EXTERN (gst_analytics_relation_meta_debug);
+#define GST_CAT_DEFAULT gst_analytics_relation_meta_debug
+
 /**
  * SECTION: gstanalyticssegmentationmtd
  * @title: GstAnalyticsSegmentationMtd
@@ -432,11 +435,36 @@ static gboolean
 gst_analytics_segmentation_mtd_transform (GstBuffer * transbuf,
     GstAnalyticsMtd * transmtd, GstBuffer * buffer, GQuark type, gpointer data)
 {
-  GstAnalyticsSegMtdData *segdata;
-  if (GST_META_TRANSFORM_IS_COPY (type)) {
-    segdata = gst_analytics_relation_meta_get_mtd_data (transmtd->meta,
-        transmtd->id);
+  GstAnalyticsSegMtdData *segdata =
+      gst_analytics_relation_meta_get_mtd_data (transmtd->meta,
+      transmtd->id);
+
+  if (transbuf != buffer)
     gst_buffer_ref (segdata->masks);
+
+  if (GST_VIDEO_META_TRANSFORM_IS_MATRIX (type)) {
+    GstVideoMetaTransformMatrix *trans = data;
+    GstVideoRectangle rect = { segdata->masks_loc_x, segdata->masks_loc_y,
+      segdata->masks_loc_w, segdata->masks_loc_h
+    };
+
+    if (trans->matrix[0][1] != 0 || trans->matrix[1][0] != 0 ||
+        trans->matrix[0][0] < 0 || trans->matrix[1][1] < 0) {
+      GST_WARNING ("Segmentation meta doesn't support rotations or flips,"
+          " not copying from buffer %" GST_PTR_FORMAT " to buffer: %"
+          GST_PTR_FORMAT, buffer, transbuf);
+      return FALSE;
+    }
+
+    if (!gst_video_meta_transform_matrix_rectangle (trans, &rect))
+      return FALSE;
+
+    segdata->masks_loc_x = rect.x;
+    segdata->masks_loc_y = rect.y;
+    segdata->masks_loc_w = rect.w;
+    segdata->masks_loc_h = rect.h;
+
+    return TRUE;
   } else if (GST_VIDEO_META_TRANSFORM_IS_SCALE (type)) {
     GstVideoMetaTransform *trans = data;
     gint ow, oh, nw, nh;
@@ -445,9 +473,6 @@ gst_analytics_segmentation_mtd_transform (GstBuffer * transbuf,
     nw = GST_VIDEO_INFO_WIDTH (trans->out_info);
     oh = GST_VIDEO_INFO_HEIGHT (trans->in_info);
     nh = GST_VIDEO_INFO_HEIGHT (trans->out_info);
-
-    segdata = gst_analytics_relation_meta_get_mtd_data (transmtd->meta,
-        transmtd->id);
 
     segdata->masks_loc_x *= nw;
     segdata->masks_loc_x /= ow;
@@ -461,12 +486,13 @@ gst_analytics_segmentation_mtd_transform (GstBuffer * transbuf,
     segdata->masks_loc_h *= nh;
     segdata->masks_loc_h /= oh;
 
-    if (transbuf != buffer) {
-      gst_buffer_ref (segdata->masks);
-    }
+    return TRUE;
+  } else if (GST_META_TRANSFORM_IS_COPY (type)) {
+    // Data already copied by generic transform function, nothing to do.
+    return TRUE;
   }
 
-  return TRUE;
+  return FALSE;
 }
 
 /**

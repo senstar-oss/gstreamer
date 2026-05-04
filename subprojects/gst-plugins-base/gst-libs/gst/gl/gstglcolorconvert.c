@@ -1165,6 +1165,10 @@ struct _GstGLColorConvertPrivate
 
   GstBufferPool *pool;
   gboolean pool_started;
+
+  /* Used to detect crop changes and update vertices */
+  gint padded_width;
+  gint padded_height;
 };
 
 GST_DEBUG_CATEGORY_STATIC (gst_gl_color_convert_debug);
@@ -1473,6 +1477,8 @@ _gst_gl_color_convert_set_caps_unlocked (GstGLColorConvert * convert,
   gst_caps_replace (&convert->priv->out_caps, out_caps);
   convert->priv->from_texture_target = from_target;
   convert->priv->to_texture_target = to_target;
+  convert->priv->padded_width = in_info.width;
+  convert->priv->padded_height = in_info.height;
   convert->initted = FALSE;
 
   convert->passthrough = passthrough;
@@ -1712,12 +1718,12 @@ _init_supported_formats (GstGLContext * context, gboolean output,
     _append_value_string_list (supported_formats, "A420_10LE", "A422_10LE",
         "A444_10LE", "A444_12LE", "A422_12LE", "A420_12LE", "A444_16LE",
         "A422_16LE", "A420_16LE", "I420_12LE", "I420_10LE", "I422_10LE",
-        "I422_12LE", "Y444_10LE", "Y444_16LE", NULL);
+        "I422_12LE", "Y444_10LE", "Y444_12LE", "Y444_16LE", NULL);
 #else
     _append_value_string_list (supported_formats, "A420_10BE", "A422_10BE",
         "A444_10BE", "A444_12BE", "A422_12BE", "A420_12BE", "A444_16BE",
         "A422_16BE", "A420_16BE", "I420_12BE", "I420_10BE", "I422_10BE",
-        "I422_12BE", "Y444_10BE", "Y444_16BE", NULL);
+        "I422_12BE", "Y444_10BE", "Y444_12BE", "Y444_16BE", NULL);
 #endif
   }
 
@@ -1755,13 +1761,14 @@ gst_gl_color_convert_caps_transform_format_info (GstGLContext * context,
       "RGB10A2_LE", "BGR10x2_LE", "RGB10x2_LE", "RGBA64_LE", "RGBA64_BE",
       "RBGA", "GBRA", "GBR", "RGBP", "BGRP", "RGB16", "BGR16", NULL);
   _init_value_string_list (&planar_yuv_formats, "Y444", "Y444_10LE",
-      "Y444_16LE", "Y444_10BE", "Y444_16BE", "I420", "Y42B", "Y41B", "A420",
-      "A444", "A422", "A420_10LE", "A422_10LE", "A444_10LE", "A444_12LE",
-      "A422_12LE", "A420_12LE", "A444_16LE", "A422_16LE", "A420_16LE",
-      "I420_12LE", "I420_10LE", "I422_10LE", "I422_12LE", "A420_10BE",
-      "A422_10BE", "A444_10BE", "A444_12BE", "A422_12BE", "A420_12BE",
-      "A444_16BE", "A422_16BE", "A420_16BE", "I420_12BE", "I420_10BE",
-      "I422_10BE", "I422_12BE", "v210", "UYVY", "YUY2", NULL);
+      "Y444_12LE", "Y444_16LE", "Y444_10BE", "Y444_12BE", "Y444_16BE", "I420",
+      "Y42B", "Y41B", "A420", "A444", "A422", "A420_10LE", "A422_10LE",
+      "A444_10LE", "A444_12LE", "A422_12LE", "A420_12LE", "A444_16LE",
+      "A422_16LE", "A420_16LE", "I420_12LE", "I420_10LE", "I422_10LE",
+      "I422_12LE", "A420_10BE", "A422_10BE", "A444_10BE", "A444_12BE",
+      "A422_12BE", "A420_12BE", "A444_16BE", "A422_16BE", "A420_16BE",
+      "I420_12BE", "I420_10BE", "I422_10BE", "I422_12BE", "v210", "UYVY",
+      "YUY2", NULL);
   _init_supported_formats (context, output, &supported_formats);
   gst_value_intersect (&supported_rgb_formats, &rgb_formats,
       &supported_formats);
@@ -2262,15 +2269,9 @@ video_format_to_gl_reorder (GstVideoFormat v_format, gint * reorder,
       reorder[3] = 2;
       break;
     case GST_VIDEO_FORMAT_GBR:
-      if (input) {
-        reorder[0] = 2;
-        reorder[1] = 0;
-        reorder[2] = 1;
-      } else {
-        reorder[0] = 0;
-        reorder[1] = 1;
-        reorder[2] = 2;
-      }
+      reorder[0] = 2;
+      reorder[1] = 0;
+      reorder[2] = 1;
       reorder[3] = 3;
       break;
     default:
@@ -3418,6 +3419,36 @@ _init_convert (GstGLColorConvert * convert)
 
     gl->BindBuffer (GL_ARRAY_BUFFER, 0);
     gl->BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
+  }
+
+  GstVideoMeta *v_meta = gst_buffer_get_video_meta (convert->inbuf);
+  if ((v_meta && (v_meta->width != convert->priv->padded_width
+              || v_meta->height != convert->priv->padded_height)) ||
+      (!v_meta && (convert->in_info.width != convert->priv->padded_width ||
+              convert->in_info.height != convert->priv->padded_height))) {
+    gdouble padded_width = v_meta ? v_meta->width : convert->in_info.width;
+    gdouble padded_height = v_meta ? v_meta->height : convert->in_info.height;
+    gdouble display_width = GST_VIDEO_INFO_WIDTH (&convert->in_info);
+    gdouble display_height = GST_VIDEO_INFO_HEIGHT (&convert->in_info);
+
+    float scale_x = display_width / padded_width;
+    float scale_y = display_height / padded_height;
+
+    GLfloat crop_vertices[20];
+    memcpy (crop_vertices, vertices, sizeof (crop_vertices));
+
+    for (int i = 0; i < 4; i++) {
+      crop_vertices[i * 5 + 3] *= scale_x;      // U
+      crop_vertices[i * 5 + 4] *= scale_y;      // V
+    }
+
+    gl->BindBuffer (GL_ARRAY_BUFFER, convert->priv->vertex_buffer);
+    gl->BufferData (GL_ARRAY_BUFFER, 4 * 5 * sizeof (GLfloat),
+        crop_vertices, GL_STATIC_DRAW);
+    gl->BindBuffer (GL_ARRAY_BUFFER, 0);
+
+    convert->priv->padded_width = padded_width;
+    convert->priv->padded_height = padded_height;
   }
 
   gl->BindTexture (GL_TEXTURE_2D, 0);

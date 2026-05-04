@@ -362,6 +362,12 @@ gst_vulkan_h265_decoder_decide_allocation (GstVideoDecoder * decoder,
   VkImageUsageFlags usage;
   GstVulkanVideoCapabilities vk_caps;
 
+  if (self->dpb_size == 0) {
+    return
+        GST_VIDEO_DECODER_CLASS (parent_class)->decide_allocation (decoder,
+        query);
+  }
+
   gst_query_parse_allocation (query, &caps, NULL);
   if (!caps)
     return FALSE;
@@ -965,7 +971,7 @@ _fill_sps (const GstH265SPS * sps, SPS * std_sps)
           _array_2_bitmask (sps->short_term_ref_pic_set[i].UsedByCurrPicS0,
           sps->short_term_ref_pic_set[i].NumDeltaPocs),
       .used_by_curr_pic_s1_flag =
-          _array_2_bitmask (sps->short_term_ref_pic_set[i].UsedByCurrPicS0,
+          _array_2_bitmask (sps->short_term_ref_pic_set[i].UsedByCurrPicS1,
           sps->short_term_ref_pic_set[i].NumDeltaPocs),
       /* Reserved */
       /* Reserved */

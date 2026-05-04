@@ -1927,6 +1927,13 @@ gst_aggregator_default_sink_event (GstAggregator * self,
         endpts = GST_CLOCK_TIME_NONE;
 
       GST_OBJECT_LOCK (aggpad);
+      if (aggpad->segment.format != GST_FORMAT_TIME) {
+        GST_WARNING_OBJECT (self, "GAP event before segment, dropping");
+        res = FALSE;
+        GST_OBJECT_UNLOCK (aggpad);
+        goto eat;
+      }
+
       res = gst_segment_clip (&aggpad->segment, GST_FORMAT_TIME, pts, endpts,
           &pts, &endpts);
       GST_OBJECT_UNLOCK (aggpad);
@@ -1965,6 +1972,14 @@ gst_aggregator_default_sink_event (GstAggregator * self,
       }
 
       goto eat;
+    }
+    case GST_EVENT_RECONFIGURE:
+    {
+      SRC_LOCK (self);
+      self->priv->has_peer_latency = FALSE;
+      SRC_BROADCAST (self);
+      SRC_UNLOCK (self);
+      break;
     }
     case GST_EVENT_TAG:
       goto eat;
@@ -4155,6 +4170,8 @@ gst_aggregator_simple_get_next_time (GstAggregator * self)
 
 /**
  * gst_aggregator_update_segment:
+ * @self: A #GstAggregator
+ * @segment: The new #GstSegment
  *
  * Subclasses should use this to update the segment on their
  * source pad, instead of directly pushing new segment events
@@ -4185,6 +4202,7 @@ gst_aggregator_update_segment (GstAggregator * self, const GstSegment * segment)
 
 /**
  * gst_aggregator_selected_samples:
+ * @self: A #GstAggregator
  * @pts: The presentation timestamp of the next output buffer
  * @dts: The decoding timestamp of the next output buffer
  * @duration: The duration of the next output buffer
@@ -4221,6 +4239,7 @@ gst_aggregator_selected_samples (GstAggregator * self,
 
 /**
  * gst_aggregator_set_ignore_inactive_pads:
+ * @self: A #GstAggregator
  * @ignore: whether inactive pads should not be waited on
  *
  * Subclasses should call this when they don't want to time out
@@ -4244,6 +4263,7 @@ gst_aggregator_set_ignore_inactive_pads (GstAggregator * self, gboolean ignore)
 
 /**
  * gst_aggregator_get_ignore_inactive_pads:
+ * @self: A #GstAggregator
  *
  * Returns: whether inactive pads will not be waited on
  * Since: 1.20
@@ -4264,6 +4284,7 @@ gst_aggregator_get_ignore_inactive_pads (GstAggregator * self)
 
 /**
  * gst_aggregator_get_force_live:
+ * @self: A #GstAggregator
  *
  * Subclasses may use the return value to inform whether they should return
  * %GST_FLOW_EOS from their aggregate implementation.
@@ -4280,6 +4301,8 @@ gst_aggregator_get_force_live (GstAggregator * self)
 
 /**
  * gst_aggregator_set_force_live:
+ * @self: A #GstAggregator
+ * @force_live: The new value
  *
  * Subclasses should call this at construction time in order for @self to
  * aggregate on a timeout even when no live source is connected.
