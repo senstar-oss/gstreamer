@@ -273,6 +273,14 @@ gst_onnx_execution_provider_get_type (void)
           "cuda"},
 #endif
 #ifdef HAVE_VSI_NPU
+      /**
+       * GstOnnxExecutionProvider::vsi
+       *
+       * VeriSilicon NPU execution provider
+       *
+       * Since: 1.28
+       */
+
       {GST_ONNX_EXECUTION_PROVIDER_VSI,
             "VeriSilicon NPU execution provider",
           "vsi"},
@@ -404,6 +412,7 @@ gst_onnx_inference_finalize (GObject * object)
 {
   GstOnnxInference *self = GST_ONNX_INFERENCE (object);
 
+  g_free (self->dest);
   g_free (self->model_file);
   g_free (self->scales);
   g_free (self->offsets);
@@ -642,8 +651,8 @@ gst_onnx_log_function (void *param, OrtLoggingLevel severity,
       break;
   }
 
-  gst_debug_log (onnx_runtime_debug, level, code_location,
-      "gst_onnx_log_function", 0, obj, "%s", message);
+  GST_CAT_LEVEL_LOG (onnx_runtime_debug, level, obj,
+      "%s: %s", code_location, message);
 }
 
 /* FIXME: This is copied from Gsttfliteinference and we should create something
